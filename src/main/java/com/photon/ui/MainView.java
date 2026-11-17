@@ -1,0 +1,138 @@
+package com.photon.ui;
+
+import com.photon.PhotonApp;
+import com.photon.duplicates.DuplicateProfileSource;
+import com.photon.duplicates.DuplicateProfileStore;
+import com.photon.duplicates.DuplicatesModule;
+import com.photon.profiles.ProfileItem;
+import com.photon.profiles.ProfilesView;
+import com.photon.settings.SettingsService;
+import com.photon.settings.SettingsView;
+import javafx.geometry.Pos;
+import javafx.scene.control.Label;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.shape.Circle;
+
+import java.util.List;
+
+/**
+ * Główny układ okna: menu boczne | przestrzeń danych, pasek statusu na dole.
+ */
+public class MainView extends BorderPane {
+
+    private final Sidebar sidebar = new Sidebar();
+    private final ContentArea contentArea = new ContentArea();
+
+    private final DuplicateProfileStore duplicateProfileStore = DuplicateProfileStore.createDefault();
+    private final SettingsService settings;
+
+    /** Widoki modułów tworzone przy pierwszym użyciu i zachowywane (formularz pamięta stan). */
+    private DuplicatesModule duplicatesModule;
+    private ProfilesView profilesView;
+    private SettingsView settingsView;
+
+    public MainView(SettingsService settings) {
+        this.settings = settings;
+        getStyleClass().add("main-view");
+        setLeft(sidebar);
+        setCenter(contentArea);
+        setBottom(createStatusBar());
+
+        sidebar.selectedSectionProperty().addListener((obs, old, section) -> {
+            if (section != null) {
+                showSection(section);
+            }
+        });
+    }
+
+    private void showSection(Section section) {
+        switch (section) {
+            case DUPLICATES -> {
+                DuplicatesModule module = duplicatesModule();
+                module.form().reloadProfiles();
+                contentArea.show("Szukaj duplikatów",
+                        "Wskaż, gdzie i jak szukać powtarzających się zdjęć oraz filmów.",
+                        module);
+            }
+            case PROFILES -> {
+                if (profilesView == null) {
+                    profilesView = new ProfilesView(List.of(new DuplicateProfileSource(duplicateProfileStore)));
+                    profilesView.setOnOpen(this::openProfile);
+                }
+                contentArea.show("Profile",
+                        "Wszystkie zapisane profile ustawień. Kliknij dwukrotnie, aby otworzyć profil w jego module.",
+                        profilesView);
+                profilesView.refresh();
+            }
+            case SETTINGS -> {
+                if (settingsView == null) {
+                    settingsView = new SettingsView(settings);
+                }
+                contentArea.show("Ustawienia",
+                        "Konfiguracja aplikacji. Zmiany zaczną obowiązywać po kliknięciu „Zapisz”.",
+                        settingsView);
+            }
+            default -> contentArea.showPlaceholder(section.getTitle(),
+                    "Ten moduł jest w przygotowaniu.",
+                    "Moduł w przygotowaniu",
+                    "Funkcje sekcji „" + section.getTitle() + "” pojawią się wkrótce.");
+        }
+    }
+
+    private DuplicatesModule duplicatesModule() {
+        if (duplicatesModule == null) {
+            duplicatesModule = new DuplicatesModule(duplicateProfileStore, settings);
+        }
+        return duplicatesModule;
+    }
+
+    /** Przechodzi do modułu profilu i wczytuje go. */
+    private void openProfile(ProfileItem item) {
+        switch (item.module()) {
+            case DUPLICATES -> {
+                sidebar.select(Section.DUPLICATES);
+                DuplicatesModule module = duplicatesModule();
+                if (module.isScanning()) {
+                    return; // nie przerywamy trwającego skanowania
+                }
+                module.showForm();
+                module.form().openProfile(item.name());
+            }
+            default -> {
+                // Pozostałe moduły nie mają jeszcze profili.
+            }
+        }
+    }
+
+    private static HBox createStatusBar() {
+        Circle dot = new Circle(4);
+        dot.getStyleClass().add("status-dot");
+
+        Label status = new Label("Gotowy", dot);
+        status.setGraphicTextGap(8);
+        status.getStyleClass().add("status-text");
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Label version = new Label(PhotonApp.APP_NAME + " " + PhotonApp.APP_VERSION
+                + "  •  JavaFX " + System.getProperty("javafx.version"));
+        version.getStyleClass().add("status-text");
+
+        HBox bar = new HBox(status, spacer, version);
+        bar.setAlignment(Pos.CENTER_LEFT);
+        bar.getStyleClass().add("status-bar");
+        return bar;
+    }
+
+    public Sidebar getSidebar() {
+        return sidebar;
+    }
+
+    public ContentArea getContentArea() {
+        return contentArea;
+    }
+}
