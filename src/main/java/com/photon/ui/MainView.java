@@ -8,6 +8,8 @@ import com.photon.profiles.ProfileItem;
 import com.photon.profiles.ProfilesView;
 import com.photon.settings.SettingsService;
 import com.photon.settings.SettingsView;
+import com.photon.thumbnails.ThumbnailProfileStore;
+import com.photon.thumbnails.ThumbnailsModule;
 import javafx.geometry.Pos;
 import javafx.scene.control.Label;
 import javafx.scene.layout.BorderPane;
@@ -27,10 +29,12 @@ public class MainView extends BorderPane {
     private final ContentArea contentArea = new ContentArea();
 
     private final DuplicateProfileStore duplicateProfileStore = DuplicateProfileStore.createDefault();
+    private final ThumbnailProfileStore thumbnailProfileStore = ThumbnailProfileStore.createDefault();
     private final SettingsService settings;
 
     /** Widoki modułów tworzone przy pierwszym użyciu i zachowywane (formularz pamięta stan). */
     private DuplicatesModule duplicatesModule;
+    private ThumbnailsModule thumbnailsModule;
     private ProfilesView profilesView;
     private SettingsView settingsView;
 
@@ -57,9 +61,17 @@ public class MainView extends BorderPane {
                         "Wskaż, gdzie i jak szukać powtarzających się zdjęć oraz filmów.",
                         module);
             }
+            case THUMBNAILS -> {
+                ThumbnailsModule module = thumbnailsModule();
+                module.form().reloadProfiles();
+                contentArea.show("Miniaturyzacja",
+                        "Twórz pomniejszone kopie zdjęć z zachowaniem metadanych i nazw plików.",
+                        module);
+            }
             case PROFILES -> {
                 if (profilesView == null) {
-                    profilesView = new ProfilesView(List.of(new DuplicateProfileSource(duplicateProfileStore)));
+                    profilesView = new ProfilesView(List.of(new DuplicateProfileSource(duplicateProfileStore),
+                            thumbnailProfileStore.asSource()));
                     profilesView.setOnOpen(this::openProfile);
                 }
                 contentArea.show("Profile",
@@ -89,6 +101,13 @@ public class MainView extends BorderPane {
         return duplicatesModule;
     }
 
+    private ThumbnailsModule thumbnailsModule() {
+        if (thumbnailsModule == null) {
+            thumbnailsModule = new ThumbnailsModule(thumbnailProfileStore, settings);
+        }
+        return thumbnailsModule;
+    }
+
     /** Przechodzi do modułu profilu i wczytuje go. */
     private void openProfile(ProfileItem item) {
         switch (item.module()) {
@@ -97,6 +116,15 @@ public class MainView extends BorderPane {
                 DuplicatesModule module = duplicatesModule();
                 if (module.isScanning()) {
                     return; // nie przerywamy trwającego skanowania
+                }
+                module.showForm();
+                module.form().openProfile(item.name());
+            }
+            case THUMBNAILS -> {
+                sidebar.select(Section.THUMBNAILS);
+                ThumbnailsModule module = thumbnailsModule();
+                if (module.isRunning()) {
+                    return; // nie przerywamy trwającej pracy
                 }
                 module.showForm();
                 module.form().openProfile(item.name());

@@ -1,11 +1,10 @@
 package com.photon.duplicates;
 
-import com.photon.ui.Dialogs;
+import com.photon.profiles.ProfileBar;
 import com.photon.ui.FormSection;
 import com.photon.ui.Texts;
 
 import static com.photon.ui.Forms.*;
-import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
@@ -37,13 +36,11 @@ import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import org.kordamp.ikonli.Ikon;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignA;
-import org.kordamp.ikonli.materialdesign2.MaterialDesignB;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignC;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignD;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignF;
@@ -52,15 +49,12 @@ import org.kordamp.ikonli.materialdesign2.MaterialDesignM;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignP;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignR;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignS;
-import org.kordamp.ikonli.materialdesign2.MaterialDesignU;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignV;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -80,22 +74,12 @@ public class DuplicateSearchView extends BorderPane {
     private static final int CPU_CORES = Runtime.getRuntime().availableProcessors();
     private static final PseudoClass SELECTED = PseudoClass.getPseudoClass("selected");
     private static final PseudoClass ERROR = PseudoClass.getPseudoClass("error");
-    private static final PseudoClass PROMPT = PseudoClass.getPseudoClass("prompt");
 
     private final IntSupplier defaultThreads;
 
     // --- Profile ---
     private final DuplicateProfileStore profileStore;
-    private final ObservableList<DuplicateProfile> profiles = FXCollections.observableArrayList();
-    private final ComboBox<DuplicateProfile> profileCombo = new ComboBox<>(profiles);
-    private final Label unsavedPill = new Label("Niezapisane zmiany");
-    private final Button saveProfile = new Button("Zapisz", new FontIcon(MaterialDesignC.CONTENT_SAVE_OUTLINE));
-    private final Button saveProfileAs = new Button("Zapisz jako…", new FontIcon(MaterialDesignC.CONTENT_SAVE_EDIT_OUTLINE));
-    private final Button revertProfile = iconButton(MaterialDesignU.UNDO, "Cofnij niezapisane zmiany");
-    private final Button renameProfile = iconButton(MaterialDesignP.PENCIL_OUTLINE, "Zmień nazwę profilu");
-    private final Button deleteProfile = iconButton(MaterialDesignD.DELETE_OUTLINE, "Usuń profil");
-    /** Blokuje wczytywanie profilu, gdy wybór w liście zmieniamy programowo. */
-    private boolean switchingProfile;
+    private final ProfileBar<DuplicateSearchOptions> profileBar;
     /** Blokuje odświeżanie stanu podczas masowego ustawiania pól formularza. */
     private boolean suppressChanges;
 
@@ -154,6 +138,9 @@ public class DuplicateSearchView extends BorderPane {
     public DuplicateSearchView(DuplicateProfileStore profileStore, IntSupplier defaultThreads) {
         this.profileStore = profileStore;
         this.defaultThreads = defaultThreads;
+        this.profileBar = new ProfileBar<>(profileStore, this::buildOptions, this::applyOptions,
+                this::showFeedback, "wyszukiwania");
+        BorderPane.setMargin(profileBar, new Insets(0, 24, 14, 0));
         getStyleClass().add("duplicate-search-view");
 
         VBox form = new VBox(18,
@@ -170,7 +157,7 @@ public class DuplicateSearchView extends BorderPane {
         scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scroll.getStyleClass().add("form-scroll");
 
-        setTop(buildProfileBar());
+        setTop(profileBar);
         setCenter(scroll);
         setBottom(buildActionBar());
 
@@ -485,7 +472,7 @@ public class DuplicateSearchView extends BorderPane {
             return;
         }
         refreshSummary();
-        refreshProfileState();
+        profileBar.refreshState();
     }
 
     private void applyDefaults() {
@@ -647,268 +634,17 @@ public class DuplicateSearchView extends BorderPane {
     // Profile
     // =====================================================================
 
-    private Node buildProfileBar() {
-        FontIcon icon = new FontIcon(MaterialDesignB.BOOKMARK_OUTLINE);
-        icon.getStyleClass().add("group-icon");
-        Label label = new Label("Profil", icon);
-        label.getStyleClass().add("field-label");
-        label.setMinWidth(Region.USE_PREF_SIZE);
-
-        profileCombo.setPromptText("Bez profilu — ustawienia bieżące");
-        profileCombo.setPrefWidth(300);
-        // Własna komórka: standardowa nie pokazuje promptText po wyczyszczeniu wyboru (setValue(null)).
-        profileCombo.setButtonCell(new ListCell<>() {
-            @Override
-            protected void updateItem(DuplicateProfile item, boolean empty) {
-                super.updateItem(item, empty);
-                boolean none = empty || item == null;
-                setText(none ? profileCombo.getPromptText() : item.name());
-                pseudoClassStateChanged(PROMPT, none);
-            }
-        });
-        profileCombo.setTooltip(new Tooltip("Wybierz profil, aby wczytać jego ustawienia"));
-        profileCombo.valueProperty().addListener((obs, old, selected) -> onProfileSelected(old, selected));
-
-        unsavedPill.getStyleClass().addAll("pill", "pill-warning");
-        unsavedPill.setMinWidth(Region.USE_PREF_SIZE);
-        unsavedPill.managedProperty().bind(unsavedPill.visibleProperty());
-        unsavedPill.setVisible(false);
-
-        saveProfile.setTooltip(new Tooltip("Zapisz zmiany w wybranym profilu"));
-        saveProfile.setOnAction(e -> saveCurrentProfile());
-        saveProfileAs.setTooltip(new Tooltip("Zapisz bieżące ustawienia jako nowy profil"));
-        saveProfileAs.setOnAction(e -> saveAsNewProfile());
-        revertProfile.setOnAction(e -> {
-            DuplicateProfile current = profileCombo.getValue();
-            if (current != null) {
-                applyOptions(current.options());
-            }
-        });
-        renameProfile.setOnAction(e -> renameCurrentProfile());
-        deleteProfile.setOnAction(e -> deleteCurrentProfile());
-
-        HBox bar = new HBox(10, label, profileCombo, unsavedPill, spacer(),
-                revertProfile, saveProfile, saveProfileAs, renameProfile, deleteProfile);
-        bar.setAlignment(Pos.CENTER_LEFT);
-        bar.getStyleClass().add("profile-bar");
-        BorderPane.setMargin(bar, new Insets(0, 24, 14, 0));
-        return bar;
-    }
-
     /**
      * Wczytuje listę profili z dysku (mogły zostać zmienione np. w sekcji „Profile”).
-     * Zachowuje wybrany profil, jeśli nadal istnieje; formularz pozostaje bez zmian.
+     * Formularz pozostaje bez zmian.
      */
     public void reloadProfiles() {
-        List<DuplicateProfile> loaded;
-        try {
-            loaded = profileStore.loadAll();
-        } catch (IOException e) {
-            showFeedback("Nie udało się wczytać profili: " + e.getMessage(), true);
-            return;
-        }
-        DuplicateProfile selected = profileCombo.getValue();
-        switchingProfile = true;
-        try {
-            profiles.setAll(loaded);
-            profileCombo.setValue(selected == null ? null : findProfile(selected.name()).orElse(null));
-        } finally {
-            switchingProfile = false;
-        }
-        refreshProfileState();
+        profileBar.reloadProfiles();
     }
 
-    /**
-     * Wybiera profil o podanej nazwie i wczytuje go do formularza
-     * (z pytaniem o niezapisane zmiany, tak jak przy wyborze z listy).
-     */
+    /** Wybiera profil o podanej nazwie i wczytuje go do formularza. */
     public void openProfile(String name) {
-        reloadProfiles();
-        findProfile(name).ifPresentOrElse(
-                profile -> {
-                    if (profile.equals(profileCombo.getValue())) {
-                        // Już wybrany — wczytaj ponownie tylko, gdy nie ma niezapisanych zmian do stracenia.
-                        if (!isDirty(profile)) {
-                            applyOptions(profile.options());
-                        }
-                    } else {
-                        profileCombo.setValue(profile);
-                    }
-                },
-                () -> showFeedback("Profil „" + name + "” nie istnieje.", true));
-    }
-
-    private Optional<DuplicateProfile> findProfile(String name) {
-        return profiles.stream().filter(p -> p.name().equalsIgnoreCase(name)).findFirst();
-    }
-
-    private void onProfileSelected(DuplicateProfile previous, DuplicateProfile selected) {
-        if (switchingProfile) {
-            return;
-        }
-        if (selected != null && previous != null && isDirty(previous)
-                && !Dialogs.confirm(getScene().getWindow(), "Niezapisane zmiany",
-                "Profil „" + previous.name() + "” ma niezapisane zmiany. Wczytać profil „"
-                        + selected.name() + "” i odrzucić te zmiany?",
-                "Odrzuć i wczytaj", true)) {
-            // Przywrócenie wyboru poza bieżącym zdarzeniem zmiany wartości.
-            Platform.runLater(() -> selectProfileSilently(previous));
-            return;
-        }
-        if (selected != null) {
-            applyOptions(selected.options());
-            showFeedback("Wczytano profil „" + selected.name() + "”.", false);
-        }
-        refreshProfileState();
-    }
-
-    private void saveCurrentProfile() {
-        DuplicateProfile current = profileCombo.getValue();
-        if (current == null) {
-            saveAsNewProfile();
-            return;
-        }
-        DuplicateProfile updated = new DuplicateProfile(current.name(), Instant.now(), buildOptions());
-        if (writeProfile(updated)) {
-            replaceProfile(current, updated);
-            showFeedback("Zapisano profil „" + updated.name() + "”.", false);
-        }
-    }
-
-    private void saveAsNewProfile() {
-        DuplicateProfile current = profileCombo.getValue();
-        String suggestion = current == null ? "" : current.name() + " (kopia)";
-        Dialogs.askText(getScene().getWindow(), "Zapisz jako nowy profil",
-                        "Podaj nazwę, pod którą zapisać bieżące ustawienia wyszukiwania.",
-                        "Zapisz", suggestion, name -> validateProfileName(name, null))
-                .ifPresent(name -> {
-                    DuplicateProfile created = new DuplicateProfile(name, Instant.now(), buildOptions());
-                    if (writeProfile(created)) {
-                        profiles.add(created);
-                        sortProfiles();
-                        selectProfileSilently(created);
-                        showFeedback("Utworzono profil „" + name + "”.", false);
-                    }
-                });
-    }
-
-    private void renameCurrentProfile() {
-        DuplicateProfile current = profileCombo.getValue();
-        if (current == null) {
-            return;
-        }
-        Dialogs.askText(getScene().getWindow(), "Zmień nazwę profilu",
-                        "Nowa nazwa profilu „" + current.name() + "”. Niezapisane zmiany ustawień nie zostaną zapisane.",
-                        "Zmień nazwę", current.name(), name -> validateProfileName(name, current))
-                .filter(name -> !name.equals(current.name()))
-                .ifPresent(name -> {
-                    try {
-                        DuplicateProfile renamed = profileStore.rename(current, name);
-                        replaceProfile(current, renamed);
-                        sortProfiles();
-                        selectProfileSilently(renamed);
-                        showFeedback("Zmieniono nazwę profilu na „" + name + "”.", false);
-                    } catch (IOException e) {
-                        Dialogs.error(getScene().getWindow(), "Błąd zmiany nazwy",
-                                "Nie udało się zmienić nazwy profilu: " + e.getMessage());
-                    }
-                });
-    }
-
-    private void deleteCurrentProfile() {
-        DuplicateProfile current = profileCombo.getValue();
-        if (current == null || !Dialogs.confirm(getScene().getWindow(), "Usuń profil",
-                "Czy na pewno usunąć profil „" + current.name() + "”? Tej operacji nie można cofnąć. "
-                        + "Bieżące ustawienia formularza pozostaną bez zmian.",
-                "Usuń", true)) {
-            return;
-        }
-        try {
-            profileStore.delete(current);
-            selectProfileSilently(null);
-            profiles.remove(current);
-            showFeedback("Usunięto profil „" + current.name() + "”.", false);
-        } catch (IOException e) {
-            Dialogs.error(getScene().getWindow(), "Błąd usuwania",
-                    "Nie udało się usunąć profilu: " + e.getMessage());
-        }
-    }
-
-    private boolean writeProfile(DuplicateProfile profile) {
-        try {
-            profileStore.save(profile);
-            return true;
-        } catch (IOException e) {
-            Dialogs.error(getScene().getWindow(), "Błąd zapisu",
-                    "Nie udało się zapisać profilu w " + profileStore.getDirectory() + ":\n" + e.getMessage());
-            return false;
-        }
-    }
-
-    /** Podmienia profil na liście, zachowując go jako wybrany. */
-    private void replaceProfile(DuplicateProfile old, DuplicateProfile replacement) {
-        switchingProfile = true;
-        try {
-            int index = profiles.indexOf(old);
-            if (index >= 0) {
-                profiles.set(index, replacement);
-            } else {
-                profiles.add(replacement);
-            }
-            profileCombo.setValue(replacement);
-        } finally {
-            switchingProfile = false;
-        }
-        refreshProfileState();
-    }
-
-    private void selectProfileSilently(DuplicateProfile profile) {
-        switchingProfile = true;
-        try {
-            profileCombo.setValue(profile);
-        } finally {
-            switchingProfile = false;
-        }
-        refreshProfileState();
-    }
-
-    private void sortProfiles() {
-        DuplicateProfile selected = profileCombo.getValue();
-        switchingProfile = true;
-        try {
-            FXCollections.sort(profiles, Comparator.comparing(p -> p.name().toLowerCase(Locale.ROOT)));
-            profileCombo.setValue(selected);
-        } finally {
-            switchingProfile = false;
-        }
-    }
-
-    private String validateProfileName(String name, DuplicateProfile renaming) {
-        String problem = DuplicateProfileStore.validateName(name);
-        if (problem != null) {
-            return problem;
-        }
-        String trimmed = name.trim();
-        boolean taken = profiles.stream()
-                .filter(p -> p != renaming)
-                .anyMatch(p -> p.name().equalsIgnoreCase(trimmed));
-        return taken ? "Profil o tej nazwie już istnieje." : null;
-    }
-
-    private boolean isDirty(DuplicateProfile profile) {
-        return profile != null && !buildOptions().equals(profile.options());
-    }
-
-    private void refreshProfileState() {
-        DuplicateProfile current = profileCombo.getValue();
-        boolean hasProfile = current != null;
-        boolean dirty = isDirty(current);
-
-        unsavedPill.setVisible(dirty);
-        saveProfile.setDisable(!dirty);
-        revertProfile.setDisable(!dirty);
-        renameProfile.setDisable(!hasProfile);
-        deleteProfile.setDisable(!hasProfile);
+        profileBar.openProfile(name);
     }
 
     private SearchMethod selectedMethod() {

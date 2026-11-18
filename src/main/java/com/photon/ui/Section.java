@@ -13,6 +13,7 @@ public enum Section {
 
     DUPLICATES("Szukaj Duplikatów", MaterialDesignC.CONTENT_DUPLICATE),
     ARCHIVE("Archiwizacja", MaterialDesignA.ARCHIVE_OUTLINE),
+    PHONE_ARCHIVE("Archiwizacja telefonu", MaterialDesignC.CELLPHONE_ARROW_DOWN),
     THUMBNAILS("Miniaturyzacja", MaterialDesignI.IMAGE_SIZE_SELECT_LARGE),
     BACKUP("Kopia Zapasowa", MaterialDesignB.BACKUP_RESTORE),
     PROFILES("Profile", MaterialDesignA.ACCOUNT_MULTIPLE_OUTLINE),

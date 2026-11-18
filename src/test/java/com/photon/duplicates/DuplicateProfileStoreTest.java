@@ -1,5 +1,7 @@
 package com.photon.duplicates;
 
+import com.photon.profiles.Profile;
+
 import junit.framework.TestCase;
 
 import java.nio.file.Files;
@@ -45,11 +47,11 @@ public class DuplicateProfileStoreTest extends TestCase {
     }
 
     public void testSaveAndLoadRoundTripPreservesOptions() throws Exception {
-        DuplicateProfile profile = new DuplicateProfile("Wakacje 2024", Instant.parse("2026-11-17T10:00:00Z"),
+        Profile<DuplicateSearchOptions> profile = new Profile<>("Wakacje 2024", Instant.parse("2026-11-17T10:00:00Z"),
                 sampleOptions());
         store.save(profile);
 
-        List<DuplicateProfile> loaded = store.loadAll();
+        List<Profile<DuplicateSearchOptions>> loaded = store.loadAll();
         assertEquals(1, loaded.size());
         assertEquals(profile, loaded.get(0));
         // Ścieżki zapisane czytelnie, nie jako URI.
@@ -58,9 +60,9 @@ public class DuplicateProfileStoreTest extends TestCase {
     }
 
     public void testRenameMovesFile() throws Exception {
-        DuplicateProfile profile = new DuplicateProfile("Stara", Instant.now(), sampleOptions());
+        Profile<DuplicateSearchOptions> profile = new Profile<>("Stara", Instant.now(), sampleOptions());
         store.save(profile);
-        DuplicateProfile renamed = store.rename(profile, "Nowa");
+        Profile<DuplicateSearchOptions> renamed = store.rename(profile, "Nowa");
 
         assertEquals("Nowa", renamed.name());
         assertFalse(Files.exists(dir.resolve("Stara.json")));
@@ -69,7 +71,7 @@ public class DuplicateProfileStoreTest extends TestCase {
     }
 
     public void testDeleteRemovesFile() throws Exception {
-        DuplicateProfile profile = new DuplicateProfile("Do usunięcia", Instant.now(), sampleOptions());
+        Profile<DuplicateSearchOptions> profile = new Profile<>("Do usunięcia", Instant.now(), sampleOptions());
         store.save(profile);
         store.delete(profile);
         assertTrue(store.loadAll().isEmpty());
@@ -77,8 +79,8 @@ public class DuplicateProfileStoreTest extends TestCase {
 
     public void testCorruptedFileIsSkipped() throws Exception {
         Files.writeString(dir.resolve("zepsuty.json"), "{ to nie jest json");
-        store.save(new DuplicateProfile("Dobry", Instant.now(), sampleOptions()));
-        List<DuplicateProfile> loaded = store.loadAll();
+        store.save(new Profile<>("Dobry", Instant.now(), sampleOptions()));
+        List<Profile<DuplicateSearchOptions>> loaded = store.loadAll();
         assertEquals(1, loaded.size());
         assertEquals("Dobry", loaded.get(0).name());
     }

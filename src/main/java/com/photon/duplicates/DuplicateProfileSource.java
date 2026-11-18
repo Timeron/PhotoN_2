@@ -34,7 +34,7 @@ public class DuplicateProfileSource implements ProfileSource {
 
     @Override
     public void delete(ProfileItem item) throws IOException {
-        store.delete(new DuplicateProfile(item.name(), item.updatedAt(), null));
+        store.delete(item.name());
     }
 
     /** Krótki opis ustawień, np. „2 lokalizacje • 24 rozszerzenia • Identyczne pliki”. */

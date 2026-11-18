@@ -2,7 +2,7 @@ package com.photon.ui;
 
 import com.photon.AppPaths;
 import com.photon.duplicates.DuplicateAction;
-import com.photon.duplicates.DuplicateProfile;
+import com.photon.profiles.Profile;
 import com.photon.duplicates.DuplicateProfileStore;
 import com.photon.duplicates.DuplicateSearchOptions;
 import com.photon.duplicates.KeepStrategy;
@@ -62,7 +62,7 @@ class MainViewUiTest {
         deleteRecursively(dataDir);
 
         DuplicateProfileStore.createDefault()
-                .save(new DuplicateProfile(PROFILE_NAME, Instant.parse("2026-11-17T10:00:00Z"), sampleOptions()));
+                .save(new Profile<>(PROFILE_NAME, Instant.parse("2026-11-17T10:00:00Z"), sampleOptions()));
 
         MainView mainView = new MainView(new SettingsService(AppPaths.settingsFile()));
         Scene scene = new Scene(mainView, 1280, 800);
@@ -82,13 +82,13 @@ class MainViewUiTest {
         List<String> titles = robot.lookup(".nav-button").queryAllAs(ToggleButton.class).stream()
                 .map(ToggleButton::getText)
                 .toList();
-        assertEquals(List.of("Szukaj Duplikatów", "Archiwizacja", "Miniaturyzacja", "Kopia Zapasowa",
+        assertEquals(List.of("Szukaj Duplikatów", "Archiwizacja", "Archiwizacja telefonu", "Miniaturyzacja", "Kopia Zapasowa",
                 "Profile", "Ustawienia"), titles);
     }
 
     @Test
     void modulesInPreparationShowPlaceholder(FxRobot robot) {
-        for (Section section : List.of(Section.ARCHIVE, Section.THUMBNAILS, Section.BACKUP)) {
+        for (Section section : List.of(Section.ARCHIVE, Section.PHONE_ARCHIVE, Section.BACKUP)) {
             robot.clickOn(navButton(robot, section));
             assertEquals(section.getTitle(), contentTitle(robot));
             assertTrue(isShowing(robot, ".empty-state-title", "Moduł w przygotowaniu"),
@@ -125,7 +125,7 @@ class MainViewUiTest {
         assertEquals("Szukaj duplikatów", contentTitle(robot));
         assertTrue(navButton(robot, Section.DUPLICATES).isSelected());
         @SuppressWarnings("unchecked")
-        ComboBox<DuplicateProfile> combo = robot.lookup(".profile-bar .combo-box").queryAs(ComboBox.class);
+        ComboBox<Profile<DuplicateSearchOptions>> combo = robot.lookup(".profile-bar .combo-box").queryAs(ComboBox.class);
         assertEquals(PROFILE_NAME, combo.getValue().name());
     }
 

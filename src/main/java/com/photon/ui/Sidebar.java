@@ -30,6 +30,7 @@ public class Sidebar extends VBox {
         VBox tools = new VBox(4,
                 navButton(Section.DUPLICATES),
                 navButton(Section.ARCHIVE),
+                navButton(Section.PHONE_ARCHIVE),
                 navButton(Section.THUMBNAILS),
                 navButton(Section.BACKUP));
 

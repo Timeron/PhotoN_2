@@ -1,5 +1,7 @@
 package com.photon.duplicates;
 
+import com.photon.profiles.Profile;
+
 import com.photon.AppPaths;
 import com.photon.duplicates.scan.DuplicateGroup;
 import com.photon.settings.SettingsService;
@@ -69,7 +71,7 @@ class DuplicateScanUiTest {
                 true, true, false, Set.of("jpg", "png", "mp4"),
                 SearchMethod.EXACT, 90, 0, 0, null, null,
                 KeepStrategy.LOCATION_PRIORITY, DuplicateAction.REPORT_ONLY, null, false, 2, false, true);
-        DuplicateProfileStore.createDefault().save(new DuplicateProfile(PROFILE, Instant.now(), options));
+        DuplicateProfileStore.createDefault().save(new Profile<>(PROFILE, Instant.now(), options));
 
         Scene scene = new Scene(new MainView(new SettingsService(AppPaths.settingsFile())), 1400, 850);
         scene.getStylesheets().add(Objects.requireNonNull(
