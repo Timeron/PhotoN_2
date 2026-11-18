@@ -1,9 +1,12 @@
 package com.photon.ui;
 
 import com.photon.PhotonApp;
+import com.photon.backup.BackupView;
 import com.photon.duplicates.DuplicateProfileSource;
 import com.photon.duplicates.DuplicateProfileStore;
 import com.photon.duplicates.DuplicatesModule;
+import com.photon.phonearchive.PhoneArchiveModule;
+import com.photon.phonearchive.PhoneArchiveProfileStore;
 import com.photon.profiles.ProfileItem;
 import com.photon.profiles.ProfilesView;
 import com.photon.settings.SettingsService;
@@ -30,11 +33,14 @@ public class MainView extends BorderPane {
 
     private final DuplicateProfileStore duplicateProfileStore = DuplicateProfileStore.createDefault();
     private final ThumbnailProfileStore thumbnailProfileStore = ThumbnailProfileStore.createDefault();
+    private final PhoneArchiveProfileStore phoneArchiveProfileStore = PhoneArchiveProfileStore.createDefault();
     private final SettingsService settings;
 
     /** Widoki modułów tworzone przy pierwszym użyciu i zachowywane (formularz pamięta stan). */
     private DuplicatesModule duplicatesModule;
     private ThumbnailsModule thumbnailsModule;
+    private PhoneArchiveModule phoneArchiveModule;
+    private BackupView backupView;
     private ProfilesView profilesView;
     private SettingsView settingsView;
 
@@ -68,10 +74,27 @@ public class MainView extends BorderPane {
                         "Twórz pomniejszone kopie zdjęć z zachowaniem metadanych i nazw plików.",
                         module);
             }
+            case PHONE_ARCHIVE -> {
+                PhoneArchiveModule module = phoneArchiveModule();
+                module.form().reloadProfiles();
+                module.form().refreshDateFolders();
+                contentArea.show("Archiwizacja telefonu",
+                        "Przenieś nowe zdjęcia i filmy do archiwum z folderami RRRR-MM-DD, pomijając te, które już tam są.",
+                        module);
+            }
+            case BACKUP -> {
+                if (backupView == null) {
+                    backupView = new BackupView(phoneArchiveProfileStore, settings);
+                }
+                backupView.reloadProfiles();
+                contentArea.show("Kopia zapasowa",
+                        "Automatyczna archiwizacja w tle według profilu „Archiwizacji telefonu”.",
+                        backupView);
+            }
             case PROFILES -> {
                 if (profilesView == null) {
                     profilesView = new ProfilesView(List.of(new DuplicateProfileSource(duplicateProfileStore),
-                            thumbnailProfileStore.asSource()));
+                            thumbnailProfileStore.asSource(), phoneArchiveProfileStore.asSource()));
                     profilesView.setOnOpen(this::openProfile);
                 }
                 contentArea.show("Profile",
@@ -108,6 +131,13 @@ public class MainView extends BorderPane {
         return thumbnailsModule;
     }
 
+    private PhoneArchiveModule phoneArchiveModule() {
+        if (phoneArchiveModule == null) {
+            phoneArchiveModule = new PhoneArchiveModule(phoneArchiveProfileStore, settings);
+        }
+        return phoneArchiveModule;
+    }
+
     /** Przechodzi do modułu profilu i wczytuje go. */
     private void openProfile(ProfileItem item) {
         switch (item.module()) {
@@ -125,6 +155,15 @@ public class MainView extends BorderPane {
                 ThumbnailsModule module = thumbnailsModule();
                 if (module.isRunning()) {
                     return; // nie przerywamy trwającej pracy
+                }
+                module.showForm();
+                module.form().openProfile(item.name());
+            }
+            case PHONE_ARCHIVE -> {
+                sidebar.select(Section.PHONE_ARCHIVE);
+                PhoneArchiveModule module = phoneArchiveModule();
+                if (module.isRunning()) {
+                    return;
                 }
                 module.showForm();
                 module.form().openProfile(item.name());

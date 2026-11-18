@@ -7,14 +7,18 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
  * Operacje na plikach duplikatów: kosz, trwałe usunięcie, przeniesienie do folderu.
- * Oryginały nigdy nie są ruszane — operacje dotyczą wyłącznie {@link DuplicateGroup#duplicates()}.
+ * Działanie automatyczne obejmuje kopie ({@link #candidates}): zwykle wszystko poza oryginałem, a w grupie
+ * z plikami oznaczonymi ręcznie jako chronione — wszystko poza nimi (także oryginał).
  * Pliki z katalogów chronionych ({@link ProtectedPaths}) są pomijane przy operacjach automatycznych
  * i mogą być usuwane tylko ręcznie ({@link #removeManually}).
  */
@@ -40,13 +44,22 @@ public final class DuplicateFileActions {
      */
     public static Outcome apply(List<DuplicateGroup> groups, Mode mode, Path target, List<Path> locations,
                                 Path log, BooleanSupplier cancelled) {
+        return apply(groups, Set.of(), mode, target, locations, log, cancelled);
+    }
+
+    /**
+     * @param kept pliki oznaczone ręcznie jako chronione — zostają, a pozostałe pliki ich grup są przetwarzane
+     */
+    public static Outcome apply(List<DuplicateGroup> groups, Set<Path> kept, Mode mode, Path target,
+                                List<Path> locations, Path log, BooleanSupplier cancelled) {
         Set<Path> processed = new HashSet<>();
         List<String> errors = new ArrayList<>();
         List<String> logLines = new ArrayList<>();
         int skippedProtected = 0;
 
         for (DuplicateGroup group : groups) {
-            for (ScannedFile file : group.duplicates()) {
+            Path keeper = keeper(group, kept);
+            for (ScannedFile file : candidates(group, kept)) {
                 if (cancelled.getAsBoolean()) {
                     break;
                 }
@@ -54,11 +67,115 @@ public final class DuplicateFileActions {
                     skippedProtected++;
                     continue;
                 }
-                process(group, file, mode, target, locations, processed, errors, logLines, "");
+                process(keeper, file, mode, target, locations, processed, errors, logLines, "");
             }
         }
         writeLog(log, logLines, errors);
         return new Outcome(processed, errors, skippedProtected);
+    }
+
+    /**
+     * Pliki grupy, które obejmie działanie automatyczne: wszystkie poza ręcznie chronionymi, a gdy w grupie
+     * nie ma takich — wszystkie poza oryginałem. (Pliki z katalogów „__…” i tak są potem pomijane.)
+     */
+    public static List<ScannedFile> candidates(DuplicateGroup group, Set<Path> kept) {
+        if (group.files().stream().noneMatch(f -> kept.contains(f.path()))) {
+            return group.duplicates();
+        }
+        return group.files().stream().filter(f -> !kept.contains(f.path())).toList();
+    }
+
+    /** Plik, który zostaje jako wzorzec grupy (do dziennika). */
+    private static Path keeper(DuplicateGroup group, Set<Path> kept) {
+        return group.files().stream().map(ScannedFile::path).filter(kept::contains).findFirst()
+                .orElse(group.original().path());
+    }
+
+    // =====================================================================
+    // Usuwanie zaznaczonych plików
+    // =====================================================================
+
+    /**
+     * Plan ręcznego usunięcia zaznaczonych plików.
+     *
+     * @param toRemove pliki, które można usunąć (pogrupowane)
+     * @param refused  pliki, których usunąć nie wolno, z powodem
+     */
+    public record RemovalPlan(Map<DuplicateGroup, List<ScannedFile>> toRemove, List<String> refused) {
+        public int count() {
+            return toRemove.values().stream().mapToInt(List::size).sum();
+        }
+
+        public long bytes() {
+            return toRemove.values().stream().flatMap(List::stream).mapToLong(ScannedFile::size).sum();
+        }
+    }
+
+    /**
+     * Sprawdza, które z zaznaczonych plików można usunąć:
+     * <ul>
+     *   <li>w każdej grupie musi zostać co najmniej jeden plik,</li>
+     *   <li>pliki oznaczone ręcznie jako chronione nie są usuwane,</li>
+     *   <li>w każdym katalogu „__…” zaznaczonego pliku musi zostać inna kopia z grupy.</li>
+     * </ul>
+     */
+    public static RemovalPlan planRemoval(Map<DuplicateGroup, ? extends Collection<ScannedFile>> selection,
+                                          Set<Path> kept) {
+        Map<DuplicateGroup, List<ScannedFile>> toRemove = new LinkedHashMap<>();
+        List<String> refused = new ArrayList<>();
+        selection.forEach((group, selected) -> {
+            Set<Path> selectedPaths = new HashSet<>();
+            for (ScannedFile file : selected) {
+                if (kept.contains(file.path())) {
+                    refused.add(file.path() + ": plik jest oznaczony jako chroniony");
+                } else {
+                    selectedPaths.add(file.path());
+                }
+            }
+            List<ScannedFile> remaining = group.files().stream()
+                    .filter(f -> !selectedPaths.contains(f.path())).toList();
+            if (remaining.isEmpty()) {
+                refused.add(group.name() + ": zaznaczono wszystkie pliki grupy — co najmniej jeden musi zostać");
+                return;
+            }
+            List<ScannedFile> removable = new ArrayList<>();
+            for (ScannedFile file : group.files()) {
+                if (!selectedPaths.contains(file.path())) {
+                    continue;
+                }
+                Path blocking = ProtectedPaths.blockingDir(remaining, file);
+                if (blocking != null) {
+                    refused.add(file.path() + ": to ostatnia kopia w chronionym katalogu " + blocking);
+                } else {
+                    removable.add(file);
+                }
+            }
+            if (!removable.isEmpty()) {
+                toRemove.put(group, removable);
+            }
+        });
+        return new RemovalPlan(toRemove, refused);
+    }
+
+    /** Wykonuje plan ręcznego usunięcia (kosz albo trwale). */
+    public static Outcome removeSelected(RemovalPlan plan, Set<Path> kept, boolean toTrash, Path log) {
+        Set<Path> processed = new HashSet<>();
+        List<String> errors = new ArrayList<>();
+        List<String> logLines = new ArrayList<>();
+        plan.toRemove().forEach((group, files) -> {
+            Set<Path> removing = new HashSet<>();
+            files.forEach(f -> removing.add(f.path()));
+            Path keeper = group.files().stream().map(ScannedFile::path).filter(p -> !removing.contains(p))
+                    .filter(kept::contains).findFirst()
+                    .orElse(group.files().stream().map(ScannedFile::path).filter(p -> !removing.contains(p))
+                            .findFirst().orElseThrow());
+            for (ScannedFile file : files) {
+                process(keeper, file, toTrash ? Mode.TRASH : Mode.DELETE, null, List.of(),
+                        processed, errors, logLines, " [ręcznie, zaznaczone]");
+            }
+        });
+        writeLog(log, logLines, errors);
+        return new Outcome(processed, errors, 0);
     }
 
     /**
@@ -73,14 +190,16 @@ public final class DuplicateFileActions {
         if (blocking != null) {
             errors.add(file.path() + ": to ostatnia kopia w chronionym katalogu " + blocking);
         } else {
-            process(group, file, toTrash ? Mode.TRASH : Mode.DELETE, null, List.of(),
+            Path keeper = group.files().stream().map(ScannedFile::path).filter(p -> !p.equals(file.path()))
+                    .findFirst().orElse(group.original().path());
+            process(keeper, file, toTrash ? Mode.TRASH : Mode.DELETE, null, List.of(),
                     processed, errors, logLines, " [ręcznie]");
         }
         writeLog(log, logLines, errors);
         return new Outcome(processed, errors, 0);
     }
 
-    private static void process(DuplicateGroup group, ScannedFile file, Mode mode, Path target, List<Path> locations,
+    private static void process(Path keeper, ScannedFile file, Mode mode, Path target, List<Path> locations,
                                 Set<Path> processed, List<String> errors, List<String> logLines, String suffix) {
         DateTimeFormatter time = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
         Path path = file.path();
@@ -111,7 +230,7 @@ public final class DuplicateFileActions {
             }
             processed.add(path);
             logLines.add(LocalDateTime.now().format(time) + "\t" + entry
-                    + "\t(oryginał: " + group.original().path() + ")" + suffix);
+                    + "\t(zostaje: " + keeper + ")" + suffix);
         } catch (IOException | RuntimeException e) {
             errors.add(path + ": " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         }

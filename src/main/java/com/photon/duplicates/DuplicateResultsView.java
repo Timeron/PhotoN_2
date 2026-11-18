@@ -25,6 +25,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.TextField;
@@ -54,6 +55,7 @@ import org.kordamp.ikonli.materialdesign2.MaterialDesignL;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignM;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignO;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignR;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignS;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignU;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignV;
 
@@ -65,6 +67,8 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -88,6 +92,8 @@ public class DuplicateResultsView extends BorderPane {
 
     private static final PseudoClass GROUP = PseudoClass.getPseudoClass("group");
     private static final PseudoClass ORIGINAL = PseudoClass.getPseudoClass("original");
+    private static final PseudoClass KEPT = PseudoClass.getPseudoClass("kept");
+    private static final PseudoClass ACTIVE = PseudoClass.getPseudoClass("active");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d.MM.yyyy HH:mm")
             .withZone(ZoneId.systemDefault());
 
@@ -113,6 +119,16 @@ public class DuplicateResultsView extends BorderPane {
     private final TreeItem<Row> root = new TreeItem<>();
     private final TreeTableView<Row> table = new TreeTableView<>(root);
     private final Map<DuplicateGroup, TreeItem<Row>> treeItems = new IdentityHashMap<>();
+    /** Pliki oznaczone ręcznie jako chronione: zostają, a pozostałe pliki ich grup idą do usunięcia/przeniesienia. */
+    private final Set<Path> kept = new HashSet<>();
+
+    // --- Zaznaczenie wielu plików ---
+    private final Label selectionCount = new Label();
+    private final Button keepButton = new Button("Oznacz jako chronione", new FontIcon(MaterialDesignS.SHIELD_CHECK_OUTLINE));
+    private final Button unkeepButton = new Button("Zdejmij ochronę", new FontIcon(MaterialDesignS.SHIELD_OFF_OUTLINE));
+    private final Button removeSelectedButton = new Button();
+    private final Button clearSelectionButton = new Button("Odznacz");
+    private HBox selectionBar;
 
     // --- Filtry ---
     private final TextField nameFilter = new TextField();
@@ -140,7 +156,7 @@ public class DuplicateResultsView extends BorderPane {
         this.groups = new ArrayList<>(result.groups());
         getStyleClass().add("duplicate-results-view");
 
-        VBox top = new VBox(14, buildHeader(), buildNotice(), buildFilterBar());
+        VBox top = new VBox(14, buildHeader(), buildNotice(), buildFilterBar(), buildSelectionBar());
         BorderPane.setMargin(top, new Insets(0, 0, 14, 0));
         setTop(top);
         setCenter(buildTable());
@@ -148,6 +164,7 @@ public class DuplicateResultsView extends BorderPane {
         refreshTypeFilter();
         refreshStats();
         applyFilters();
+        refreshSelectionBar();
     }
 
     public void setOnBack(Runnable handler) {
@@ -300,6 +317,29 @@ public class DuplicateResultsView extends BorderPane {
         return bar;
     }
 
+    private Node buildSelectionBar() {
+        selectionCount.getStyleClass().add("selection-count");
+        selectionCount.setMinWidth(Label.USE_PREF_SIZE);
+
+        keepButton.setTooltip(new Tooltip("Zaznaczone pliki zostaną zachowane, a wszystkie pozostałe pliki z ich grup "
+                + "(także oryginały) zostaną zaznaczone do usunięcia lub przeniesienia"));
+        keepButton.setOnAction(e -> keepSelected());
+        unkeepButton.setTooltip(new Tooltip("Zaznaczone pliki przestaną być chronione"));
+        unkeepButton.setOnAction(e -> unkeepSelected());
+        removeSelectedButton.getStyleClass().add("button-danger");
+        removeSelectedButton.setOnAction(e -> removeSelected());
+        clearSelectionButton.setOnAction(e -> table.getSelectionModel().clearSelection());
+
+        for (Button b : List.of(keepButton, unkeepButton, removeSelectedButton, clearSelectionButton)) {
+            b.setMinWidth(Button.USE_PREF_SIZE);
+        }
+        selectionBar = new HBox(10, selectionCount, spacer(), clearSelectionButton, unkeepButton, keepButton,
+                removeSelectedButton);
+        selectionBar.setAlignment(Pos.CENTER_LEFT);
+        selectionBar.getStyleClass().add("selection-bar");
+        return selectionBar;
+    }
+
     private static Label fixedLabel(String text) {
         Label label = fieldLabel(text);
         label.setMinWidth(Label.USE_PREF_SIZE);
@@ -383,6 +423,15 @@ public class DuplicateResultsView extends BorderPane {
         });
 
         table.setRowFactory(t -> new ResultRow());
+        // Ctrl+klik dodaje/odejmuje plik z zaznaczenia, Shift+klik zaznacza zakres.
+        table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        table.getSelectionModel().getSelectedItems().addListener(
+                (javafx.collections.ListChangeListener<TreeItem<Row>>) c -> refreshSelectionBar());
+        table.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.DELETE && !selectedFiles().isEmpty()) {
+                removeSelected();
+            }
+        });
 
         Label placeholder = new Label();
         placeholder.getStyleClass().add("list-placeholder");
@@ -416,18 +465,25 @@ public class DuplicateResultsView extends BorderPane {
         return cell;
     }
 
-    /** Kolumna nazwy: grupa = ikona + nazwa, plik = ścieżka (oryginał oznaczony). */
-    private static final class NameCell extends TreeTableCell<Row, Row> {
+    /** Kolumna nazwy: grupa = ikona + nazwa, plik = ścieżka (oryginał, ochrona i los pliku oznaczone). */
+    private final class NameCell extends TreeTableCell<Row, Row> {
 
         private final Label originalPill = new Label("Oryginał");
-        private final Label protectedPill = new Label("Chroniony", new FontIcon(MaterialDesignL.LOCK_OUTLINE));
+        private final Label keptPill = new Label("Chroniony", new FontIcon(MaterialDesignS.SHIELD_CHECK_OUTLINE));
+        private final Label protectedPill = new Label("Folder " + ProtectedPaths.PREFIX,
+                new FontIcon(MaterialDesignL.LOCK_OUTLINE));
+        private final Label candidatePill = new Label();
         private final HBox pills = new HBox(6);
 
         NameCell() {
             originalPill.getStyleClass().addAll("pill", "pill-success");
+            keptPill.getStyleClass().addAll("pill", "pill-kept");
+            keptPill.setTooltip(new Tooltip("Oznaczony ręcznie jako chroniony: zostaje, a pozostałe pliki z tej grupy "
+                    + "(także oryginał) zostaną usunięte lub przeniesione."));
             protectedPill.getStyleClass().addAll("pill", "pill-protected");
             protectedPill.setTooltip(new Tooltip("Plik w katalogu zaczynającym się od „" + ProtectedPaths.PREFIX
                     + "”: nie jest usuwany automatycznie, a ręcznie tylko wtedy, gdy w tym katalogu zostaje inna kopia."));
+            candidatePill.getStyleClass().addAll("pill", "pill-danger");
             pills.setAlignment(Pos.CENTER_LEFT);
         }
 
@@ -448,9 +504,14 @@ public class DuplicateResultsView extends BorderPane {
                 setText(row.group().name());
                 setTooltip(null);
             } else {
-                boolean original = row.file() == row.group().original();
+                boolean groupKept = hasKept(row.group());
                 pills.getChildren().clear();
-                if (original) {
+                if (kept.contains(row.file().path())) {
+                    pills.getChildren().add(keptPill);
+                } else if (groupKept) {
+                    candidatePill.setText(candidateLabel());
+                    pills.getChildren().add(candidatePill);
+                } else if (row.file() == row.group().original()) {
                     pills.getChildren().add(originalPill);
                 }
                 if (ProtectedPaths.isProtected(row.file().path())) {
@@ -484,9 +545,12 @@ public class DuplicateResultsView extends BorderPane {
         protected void updateItem(Row row, boolean empty) {
             super.updateItem(row, empty);
             boolean group = !empty && row != null && row.isGroup();
-            boolean original = !empty && row != null && !row.isGroup() && row.file() == row.group().original();
+            boolean file = !empty && row != null && !row.isGroup();
+            boolean isKept = file && kept.contains(row.file().path());
+            boolean original = file && !hasKept(row.group()) && row.file() == row.group().original();
             pseudoClassStateChanged(GROUP, group);
             pseudoClassStateChanged(ORIGINAL, original);
+            pseudoClassStateChanged(KEPT, isKept);
             setContextMenu(empty || row == null ? null : contextMenu(row));
         }
     }
@@ -632,7 +696,7 @@ public class DuplicateResultsView extends BorderPane {
         if (!actionButton.isManaged()) {
             return;
         }
-        int copies = removableCopies(visibleGroups());
+        int copies = removableCopies(visibleGroups(), kept);
         String verb = switch (actionMode()) {
             case MOVE -> "Przenieś kopie do folderu";
             case TRASH -> "Przenieś kopie do kosza";
@@ -646,11 +710,14 @@ public class DuplicateResultsView extends BorderPane {
 
     private void runAction() {
         List<DuplicateGroup> target = visibleGroups();
-        int copies = removableCopies(target);
-        int protectedCopies = target.stream().mapToInt(g -> g.count() - 1).sum() - copies;
-        long bytes = target.stream().flatMap(g -> g.duplicates().stream())
+        Set<Path> keptNow = Set.copyOf(kept);
+        int copies = removableCopies(target, keptNow);
+        int protectedCopies = target.stream()
+                .mapToInt(g -> DuplicateFileActions.candidates(g, keptNow).size()).sum() - copies;
+        long bytes = target.stream().flatMap(g -> DuplicateFileActions.candidates(g, keptNow).stream())
                 .filter(f -> !ProtectedPaths.isProtected(f.path()))
                 .mapToLong(ScannedFile::size).sum();
+        long keptGroups = target.stream().filter(this::hasKept).count();
         DuplicateFileActions.Mode mode = actionMode();
         Path moveTarget = result.options().moveTarget();
         AppSettings s = settings.get();
@@ -665,6 +732,11 @@ public class DuplicateResultsView extends BorderPane {
             case DELETE -> "Trwale usunąć " + what + "?\n\nOryginały zostaną na miejscu. "
                     + "Tej operacji NIE można cofnąć (w Ustawieniach wyłączono używanie kosza).";
         };
+        if (keptGroups > 0) {
+            message += "\n\nW " + Texts.count((int) keptGroups, "grupie", "grupach", "grupach")
+                    + " z plikami oznaczonymi jako chronione zostają tylko one — pozostałe pliki, także oryginały, "
+                    + "zostaną objęte operacją.";
+        }
         if (protectedCopies > 0) {
             message += "\n\nPominięte zostanie " + Texts.count(protectedCopies, "kopia", "kopie", "kopii")
                     + " z chronionych katalogów („" + ProtectedPaths.PREFIX + "…”) — można je usunąć tylko ręcznie.";
@@ -686,7 +758,7 @@ public class DuplicateResultsView extends BorderPane {
         Task<DuplicateFileActions.Outcome> task = new Task<>() {
             @Override
             protected DuplicateFileActions.Outcome call() {
-                return DuplicateFileActions.apply(target, mode, moveTarget, locations, log, this::isCancelled);
+                return DuplicateFileActions.apply(target, keptNow, mode, moveTarget, locations, log, this::isCancelled);
             }
         };
         setDisable(true);
@@ -708,8 +780,8 @@ public class DuplicateResultsView extends BorderPane {
     }
 
     /** Liczba kopii, które obejmie działanie automatyczne (bez plików z chronionych katalogów). */
-    private static int removableCopies(List<DuplicateGroup> target) {
-        return (int) target.stream().flatMap(g -> g.duplicates().stream())
+    private static int removableCopies(List<DuplicateGroup> target, Set<Path> kept) {
+        return (int) target.stream().flatMap(g -> DuplicateFileActions.candidates(g, kept).stream())
                 .filter(f -> !ProtectedPaths.isProtected(f.path()))
                 .count();
     }
@@ -749,6 +821,9 @@ public class DuplicateResultsView extends BorderPane {
             Set<DuplicateGroup> keep = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
             keep.addAll(updated);
             treeItems.keySet().retainAll(keep);
+            Set<Path> existing = new HashSet<>();
+            updated.forEach(g -> g.files().forEach(f -> existing.add(f.path())));
+            kept.retainAll(existing);
             refreshTypeFilter();
             refreshStats();
             applyFilters();
@@ -759,11 +834,190 @@ public class DuplicateResultsView extends BorderPane {
                     + " z chronionych katalogów (" + ProtectedPaths.PREFIX + "…).";
         }
         notice.setText(done);
+        table.refresh();
+        refreshSelectionBar();
         if (!outcome.errors().isEmpty()) {
             Dialogs.error(window(), "Część plików nie została przetworzona",
                     Texts.count(outcome.errors().size(), "błąd", "błędy", "błędów") + ":\n"
                             + String.join("\n", outcome.errors().subList(0, Math.min(10, outcome.errors().size()))));
         }
+    }
+
+    // =====================================================================
+    // Zaznaczanie wielu plików i ręczna ochrona
+    // =====================================================================
+
+    private boolean hasKept(DuplicateGroup group) {
+        return !kept.isEmpty() && group.files().stream().anyMatch(f -> kept.contains(f.path()));
+    }
+
+    /** Pigułka plików, które obejmie operacja w grupie z ręcznie chronionymi plikami. */
+    private String candidateLabel() {
+        DuplicateAction action = result.options().action();
+        if (action == null || action == DuplicateAction.REPORT_ONLY) {
+            return "Do usunięcia";
+        }
+        return switch (actionMode()) {
+            case MOVE -> "Do przeniesienia";
+            case TRASH -> "Do kosza";
+            case DELETE -> "Do usunięcia";
+        };
+    }
+
+    /** Zaznaczone pliki (bez wierszy grup), pogrupowane, w kolejności grup. */
+    public Map<DuplicateGroup, List<ScannedFile>> selectedFiles() {
+        Map<DuplicateGroup, List<ScannedFile>> selected = new LinkedHashMap<>();
+        for (TreeItem<Row> item : table.getSelectionModel().getSelectedItems()) {
+            if (item == null || item.getValue() == null || item.getValue().isGroup()) {
+                continue;
+            }
+            Row row = item.getValue();
+            List<ScannedFile> files = selected.computeIfAbsent(row.group(), g -> new ArrayList<>());
+            if (!files.contains(row.file())) {
+                files.add(row.file());
+            }
+        }
+        return selected;
+    }
+
+    public Set<Path> keptFiles() {
+        return java.util.Collections.unmodifiableSet(kept);
+    }
+
+    private void refreshSelectionBar() {
+        Map<DuplicateGroup, List<ScannedFile>> selected = selectedFiles();
+        int count = selected.values().stream().mapToInt(List::size).sum();
+        long bytes = selected.values().stream().flatMap(List::stream).mapToLong(ScannedFile::size).sum();
+        boolean any = count > 0;
+        selectionCount.setText(any
+                ? "Zaznaczono " + Texts.count(count, "plik", "pliki", "plików") + " (" + Texts.formatBytes(bytes) + ")"
+                + (selected.size() > 1 ? " w " + Texts.count(selected.size(), "grupie", "grupach", "grupach") : "")
+                : "Zaznacz pliki: Ctrl+klik dodaje lub odejmuje plik, Shift+klik zaznacza zakres.");
+        selectionCount.pseudoClassStateChanged(ACTIVE, any);
+        if (selectionBar != null) {
+            selectionBar.pseudoClassStateChanged(ACTIVE, any);
+        }
+        boolean anyKept = selected.values().stream().flatMap(List::stream).anyMatch(f -> kept.contains(f.path()));
+        boolean anyNotKept = selected.values().stream().flatMap(List::stream).anyMatch(f -> !kept.contains(f.path()));
+        keepButton.setDisable(!anyNotKept);
+        unkeepButton.setDisable(!anyKept);
+        unkeepButton.setVisible(!kept.isEmpty());
+        unkeepButton.setManaged(!kept.isEmpty());
+        clearSelectionButton.setDisable(table.getSelectionModel().isEmpty());
+
+        boolean trash = settings.get().useRecycleBin();
+        removeSelectedButton.setText((trash ? "Przenieś zaznaczone do kosza" : "Usuń zaznaczone")
+                + (any ? " (" + count + ")" : ""));
+        removeSelectedButton.setGraphic(new FontIcon(MaterialDesignD.DELETE_OUTLINE));
+        removeSelectedButton.setDisable(!anyNotKept);
+    }
+
+    /**
+     * Oznacza zaznaczone pliki jako chronione. Pozostałe pliki z ich grup (także oryginały) zostają
+     * zaznaczone — gotowe do usunięcia przyciskiem lub objęte działaniem automatycznym.
+     */
+    private void keepSelected() {
+        Map<DuplicateGroup, List<ScannedFile>> selected = selectedFiles();
+        if (selected.isEmpty()) {
+            return;
+        }
+        int newlyKept = 0;
+        for (List<ScannedFile> files : selected.values()) {
+            for (ScannedFile f : files) {
+                if (kept.add(f.path())) {
+                    newlyKept++;
+                }
+            }
+        }
+        // Zaznaczenie przechodzi na pliki, które teraz pójdą do usunięcia/przeniesienia.
+        table.getSelectionModel().clearSelection();
+        int toRemove = 0;
+        for (DuplicateGroup group : selected.keySet()) {
+            TreeItem<Row> groupItem = treeItem(group);
+            groupItem.setExpanded(true);
+            for (TreeItem<Row> child : groupItem.getChildren()) {
+                if (!kept.contains(child.getValue().file().path())) {
+                    toRemove++;
+                    int index = table.getRow(child);
+                    if (index >= 0) {
+                        table.getSelectionModel().select(index);
+                    }
+                }
+            }
+        }
+        table.refresh();
+        refreshActionButton();
+        refreshSelectionBar();
+        notice.setText("Oznaczono jako chronione: " + Texts.count(newlyKept, "plik", "pliki", "plików") + ". "
+                + (toRemove == 0 ? "W ich grupach nie zostały inne pliki."
+                : "Pozostałe pliki z ich grup (" + toRemove + ", także oryginały) zaznaczono do "
+                + (candidateLabel().equals("Do przeniesienia") ? "przeniesienia" : "usunięcia") + "."));
+    }
+
+    private void unkeepSelected() {
+        int removed = 0;
+        for (List<ScannedFile> files : selectedFiles().values()) {
+            for (ScannedFile f : files) {
+                if (kept.remove(f.path())) {
+                    removed++;
+                }
+            }
+        }
+        table.refresh();
+        refreshActionButton();
+        refreshSelectionBar();
+        notice.setText("Zdjęto ochronę z " + Texts.count(removed, "pliku", "plików", "plików") + ".");
+    }
+
+    /** Usuwa zaznaczone pliki (kosz lub trwale) — zawsze z potwierdzeniem i listą plików. */
+    private void removeSelected() {
+        Map<DuplicateGroup, List<ScannedFile>> selected = selectedFiles();
+        if (selected.isEmpty()) {
+            return;
+        }
+        Set<Path> keptNow = Set.copyOf(kept);
+        DuplicateFileActions.RemovalPlan plan = DuplicateFileActions.planRemoval(selected, keptNow);
+        if (plan.count() == 0) {
+            Dialogs.error(window(), "Nie można usunąć zaznaczonych plików",
+                    String.join("\n", plan.refused().subList(0, Math.min(10, plan.refused().size()))));
+            return;
+        }
+        boolean trash = settings.get().useRecycleBin();
+        List<String> details = new ArrayList<>();
+        plan.toRemove().values().forEach(files -> files.forEach(f -> details.add(f.path().toString())));
+        String message = (trash ? "Przenieść do kosza " : "Trwale usunąć ")
+                + Texts.count(plan.count(), "plik", "pliki", "plików") + " (" + Texts.formatBytes(plan.bytes()) + ")?"
+                + " W każdej grupie zostaje co najmniej jeden plik."
+                + (trash ? "" : "\n\nTej operacji NIE można cofnąć.");
+        if (!plan.refused().isEmpty()) {
+            message += "\n\nPominięte zostanie " + Texts.count(plan.refused().size(), "zaznaczenie", "zaznaczenia",
+                    "zaznaczeń") + ":\n" + String.join("\n", plan.refused().subList(0, Math.min(5, plan.refused().size())))
+                    + (plan.refused().size() > 5 ? "\n…" : "");
+        }
+        if (!Dialogs.confirmWithDetails(window(), trash ? "Przenieś zaznaczone do kosza" : "Usuń zaznaczone pliki",
+                message, details, trash ? "Przenieś do kosza" : "Usuń trwale", true)) {
+            return;
+        }
+        Path log = settings.get().keepOperationLog() ? AppPaths.logsDir().resolve("operacje-na-plikach.log") : null;
+        Task<DuplicateFileActions.Outcome> task = new Task<>() {
+            @Override
+            protected DuplicateFileActions.Outcome call() {
+                return DuplicateFileActions.removeSelected(plan, keptNow, trash, log);
+            }
+        };
+        setDisable(true);
+        task.setOnSucceeded(e -> {
+            setDisable(false);
+            table.getSelectionModel().clearSelection();
+            applyOutcome(task.getValue(), trash ? "Przeniesiono do kosza " : "Usunięto ");
+        });
+        task.setOnFailed(e -> {
+            setDisable(false);
+            showError(task.getException().getMessage());
+        });
+        Thread thread = new Thread(task, "photon-duplicate-remove-selected");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void exportCsv() {

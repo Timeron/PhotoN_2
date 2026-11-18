@@ -88,7 +88,7 @@ class MainViewUiTest {
 
     @Test
     void modulesInPreparationShowPlaceholder(FxRobot robot) {
-        for (Section section : List.of(Section.ARCHIVE, Section.PHONE_ARCHIVE, Section.BACKUP)) {
+        for (Section section : List.of(Section.ARCHIVE)) {
             robot.clickOn(navButton(robot, section));
             assertEquals(section.getTitle(), contentTitle(robot));
             assertTrue(isShowing(robot, ".empty-state-title", "Moduł w przygotowaniu"),

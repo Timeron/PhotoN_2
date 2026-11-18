@@ -7,12 +7,14 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -73,6 +75,26 @@ public final class Dialogs {
         DialogPane pane = dialog.getDialogPane();
         pane.getButtonTypes().addAll(ButtonType.CANCEL, confirm);
         pane.setContent(content(title, message));
+        pane.lookupButton(confirm).getStyleClass().add(destructive ? "button-danger" : "button-primary");
+        styleCancel(pane);
+        dialog.setResultConverter(button -> button == confirm);
+        return dialog.showAndWait().orElse(false);
+    }
+
+    /** Pyta o potwierdzenie, pokazując przewijaną listę szczegółów (np. ścieżek plików). */
+    public static boolean confirmWithDetails(Window owner, String title, String message, List<String> details,
+                                             String confirmText, boolean destructive) {
+        Dialog<Boolean> dialog = create(owner);
+        dialog.getDialogPane().setPrefWidth(640);
+        ButtonType confirm = new ButtonType(confirmText, ButtonBar.ButtonData.OK_DONE);
+        DialogPane pane = dialog.getDialogPane();
+        pane.getButtonTypes().addAll(ButtonType.CANCEL, confirm);
+        TextArea list = new TextArea(String.join(System.lineSeparator(), details));
+        list.setEditable(false);
+        list.setWrapText(false);
+        list.setPrefRowCount(Math.min(12, Math.max(3, details.size())));
+        list.getStyleClass().add("dialog-details");
+        pane.setContent(content(title, message, list));
         pane.lookupButton(confirm).getStyleClass().add(destructive ? "button-danger" : "button-primary");
         styleCancel(pane);
         dialog.setResultConverter(button -> button == confirm);

@@ -60,6 +60,23 @@ public final class ProtectedPaths {
         return null;
     }
 
+    /**
+     * Pierwszy chroniony katalog pliku, w którym po jego usunięciu nie zostałaby żadna z plików
+     * {@code remaining} (istniejących), albo {@code null}, gdy plik można usunąć.
+     */
+    public static Path blockingDir(java.util.Collection<ScannedFile> remaining, ScannedFile file) {
+        for (Path dir : protectedDirs(file.path())) {
+            boolean anotherCopy = remaining.stream()
+                    .filter(other -> !other.path().equals(file.path()))
+                    .anyMatch(other -> other.path().toAbsolutePath().normalize().startsWith(dir)
+                            && Files.exists(other.path()));
+            if (!anotherCopy) {
+                return dir;
+            }
+        }
+        return null;
+    }
+
     public static boolean canRemoveManually(DuplicateGroup group, ScannedFile file) {
         return blockingDir(group, file) == null;
     }

@@ -84,6 +84,20 @@ public class HashCache {
         return entries.size();
     }
 
+    /** Suma SHA-256 pliku — z pamięci, gdy plik się nie zmienił, inaczej liczona i zapamiętywana. */
+    public String sha256(Path path) throws IOException {
+        java.nio.file.attribute.BasicFileAttributes attrs =
+                Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
+        java.time.Instant modified = attrs.lastModifiedTime().toInstant();
+        ScannedFile scanned = new ScannedFile(path, attrs.size(), modified, modified, 0);
+        Entry entry = get(scanned);
+        if (entry.sha256() == null) {
+            entry = entry.withSha256(Fingerprints.sha256(path));
+            put(scanned, entry);
+        }
+        return entry.sha256();
+    }
+
     /** Aktualny wpis dla pliku (pusty, gdy brak lub plik się zmienił). */
     Entry get(ScannedFile scanned) {
         Entry entry = entries.get(key(scanned));

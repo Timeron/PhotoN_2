@@ -1241,3 +1241,83 @@
     -fx-icon-color: #fbbf24;
     -fx-icon-size: 12px;
 }
+
+/* ---------- Archiwizacja telefonu ---------- */
+
+.warning-banner {
+    -fx-background-color: #fbbf241a;
+    -fx-background-radius: 10;
+    -fx-border-color: #fbbf2466;
+    -fx-border-radius: 10;
+    -fx-text-fill: #fde68a;
+    -fx-padding: 10 14 10 14;
+    -fx-graphic-text-gap: 10;
+}
+
+.warning-banner .ikonli-font-icon {
+    -fx-icon-color: #fbbf24;
+    -fx-icon-size: 18px;
+}
+
+.dialog-details {
+    -fx-font-family: "Consolas", monospace;
+    -fx-font-size: 12px;
+}
+
+/* ---------- Duplikaty: zaznaczanie wielu plików ---------- */
+
+.selection-bar {
+    -fx-background-color: -ph-surface;
+    -fx-background-radius: 14;
+    -fx-border-color: -ph-border;
+    -fx-border-radius: 14;
+    -fx-padding: 8 12 8 16;
+}
+
+.selection-bar:active {
+    -fx-border-color: #7c5cff99;
+}
+
+.selection-count {
+    -fx-text-fill: -ph-text;
+    -fx-font-weight: bold;
+}
+
+.pill-kept {
+    -fx-background-color: #22d3ee26;
+    -fx-text-fill: #67e8f9;
+}
+
+.pill-kept .ikonli-font-icon {
+    -fx-icon-color: #67e8f9;
+    -fx-icon-size: 12px;
+}
+
+.pill-danger {
+    -fx-background-color: #e5484d26;
+    -fx-text-fill: #f87171;
+}
+
+.results-table .tree-table-row-cell:filled:kept .tree-table-cell {
+    -fx-text-fill: #67e8f9;
+}
+
+.results-table .tree-table-row-cell:filled:selected {
+    -fx-background-color: #7c5cff4d;
+}
+
+/* ---------- Kopia zapasowa ---------- */
+
+.backup-state {
+    -fx-text-fill: -ph-text-muted;
+    -fx-font-weight: bold;
+}
+
+.backup-state:active {
+    -fx-text-fill: -ph-success;
+}
+
+.backup-log {
+    -fx-font-family: "Consolas", monospace;
+    -fx-font-size: 12px;
+}

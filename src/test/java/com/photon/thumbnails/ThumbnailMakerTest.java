@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class ThumbnailMakerTest {
+public class ThumbnailMakerTest {
 
     private static final String DATE = "2023:07:15 12:34:56";
 
@@ -147,7 +147,7 @@ class ThumbnailMakerTest {
     // Pomocnicze: zdjęcie z EXIF, XMP i profilem ICC
     // =====================================================================
 
-    static void writePhoto(Path file, int width, int height, boolean withMetadata) throws IOException {
+    public static void writePhoto(Path file, int width, int height, boolean withMetadata) throws IOException {
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = image.createGraphics();
         g.setColor(new Color(200, 30, 40));
@@ -216,7 +216,7 @@ class ThumbnailMakerTest {
         return out;
     }
 
-    static String sha256(Path file) throws IOException {
+    public static String sha256(Path file) throws IOException {
         return ThumbnailMaker.sha256(Files.readAllBytes(file));
     }
 

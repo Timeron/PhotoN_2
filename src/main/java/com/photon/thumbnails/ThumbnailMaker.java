@@ -40,7 +40,7 @@ import java.util.List;
  */
 public final class ThumbnailMaker {
 
-    static final int JPEG_QUALITY_PERCENT = 95;
+    public static final int JPEG_QUALITY_PERCENT = 95;
 
     /** Co zrobiono z plikiem. */
     public enum Result { RESIZED, KEPT_SIZE }
