@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.concurrent.Callable;
@@ -142,6 +143,61 @@ class BackupUiTest {
         write(upload.resolve("IMG_3.jpg"), "trzy");
         Thread.sleep(1000);
         assertFalse(Files.exists(day.resolve("IMG_3.jpg")), "po zatrzymaniu nic nie jest archiwizowane");
+    }
+
+    @Test
+    void startsOneAgentForTwoCheckedProfiles(FxRobot robot) throws Exception {
+        Path upload = dir.resolve("Upload");
+        Path other = Files.createDirectories(dir.resolve("Inny"));
+        Path archive = dir.resolve("Archiwum");
+        Path otherArchive = dir.resolve("Archiwum2");
+
+        robot.interact(() -> view.selectProfiles(List.of("Telefon", "Inny")));
+        assertEquals(2, view.selectedProfiles().size());
+        robot.clickOn("Uruchom");
+        waitFor(robot, () -> view.isRunning());
+        assertTrue(view.isProfileSelectionLocked());
+
+        write(upload.resolve("IMG_dwa_1.jpg"), "z pierwszego profilu");
+        write(other.resolve("IMG_dwa_2.jpg"), "z drugiego profilu");
+        Path day = archive.resolve(LocalDate.now().format(PhoneArchiver.DAY_FORMAT));
+        Path otherDay = otherArchive.resolve(LocalDate.now().format(PhoneArchiver.DAY_FORMAT));
+        waitFor(robot, () -> Files.exists(day.resolve("IMG_dwa_1.jpg")));
+        waitFor(robot, () -> Files.exists(otherDay.resolve("IMG_dwa_2.jpg")));
+        assertFalse(Files.exists(day.resolve("IMG_dwa_2.jpg")), "każdy profil do swojego archiwum");
+
+        // Stan: oba profile w opisie agenta i osobne bloki stanu dla każdego profilu.
+        waitFor(robot, () -> {
+            String state = robot.lookup(".backup-state").queryAs(Label.class).getText();
+            return state.contains("profile") && state.contains("„Telefon”") && state.contains("„Inny”");
+        });
+        waitFor(robot, () -> robot.lookup(".profile-state").queryAll().size() == 2);
+        waitFor(robot, () -> robot.lookup(".profile-state-title").queryAllAs(Label.class).stream()
+                .map(Label::getText).filter(t -> t.startsWith("Telefon") || t.startsWith("Inny")).count() == 2);
+        waitFor(robot, () -> view.logEntries().stream().anyMatch(e -> e.contains("[Inny] Zarchiwizowano 1 plik")));
+
+        robot.clickOn("Zatrzymaj");
+        waitFor(robot, () -> !view.isRunning());
+        assertFalse(view.isProfileSelectionLocked());
+    }
+
+    @Test
+    void refusesProfilesWithOverlappingFolders(FxRobot robot) throws Exception {
+        Path camera = Files.createDirectories(dir.resolve("Upload/Camera"));
+        new PhoneArchiveProfileStore(dir.resolve("profile")).save(new Profile<>("Aparat", Instant.now(),
+                new PhoneArchiveOptions(camera, dir.resolve("Archiwum3"), true)));
+        robot.interact(() -> {
+            view.reloadProfiles();
+            view.selectProfiles(List.of("Telefon", "Aparat"));
+        });
+
+        robot.clickOn("Uruchom");
+        WaitForAsyncUtils.waitForFxEvents();
+        String feedback = robot.lookup(".action-bar .action-feedback").queryAs(Label.class).getText();
+        assertTrue(feedback.contains("pokrywające się foldery źródłowe"), feedback);
+        Thread.sleep(500);
+        assertFalse(view.isRunning(), "agent nie startuje");
+        assertFalse(view.isProfileSelectionLocked(), "wybór można poprawić");
     }
 
     private static void waitFor(FxRobot robot, Callable<Boolean> condition) throws Exception {
