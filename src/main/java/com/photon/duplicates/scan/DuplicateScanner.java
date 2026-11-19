@@ -35,6 +35,12 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.FileVisitOption;
+import java.nio.file.NoSuchFileException;
+import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
+import com.photon.CancelledException;
 
 /**
  * Silnik wyszukiwania duplikatów: przegląda lokalizacje według konfiguracji, porównuje pliki
@@ -49,12 +55,6 @@ public class DuplicateScanner {
         void update(String message, long done, long total);
     }
 
-    /** Skanowanie przerwane przez użytkownika. */
-    public static class CancelledException extends RuntimeException {
-        public CancelledException() {
-            super("Skanowanie przerwane");
-        }
-    }
 
     private static final int MAX_ERROR_MESSAGES = 200;
 
@@ -79,7 +79,7 @@ public class DuplicateScanner {
 
         List<List<ScannedFile>> clusters = switch (options.method() == null ? SearchMethod.EXACT : options.method()) {
             case EXACT -> groupExact(files, progress, cancelled);
-            case NAME_SIZE -> groupByKey(files, f -> f.fileName().toLowerCase(java.util.Locale.ROOT) + "|" + f.size());
+            case NAME_SIZE -> groupByKey(files, f -> f.fileName().toLowerCase(Locale.ROOT) + "|" + f.size());
             case SIMILAR -> groupSimilar(files, progress, cancelled);
             case METADATA -> groupByMetadata(files, progress, cancelled);
         };
@@ -137,7 +137,7 @@ public class DuplicateScanner {
                 continue;
             }
             try {
-                Files.walkFileTree(root, EnumSet.noneOf(java.nio.file.FileVisitOption.class), maxDepth,
+                Files.walkFileTree(root, EnumSet.noneOf(FileVisitOption.class), maxDepth,
                         new FileVisitor<>() {
                             @Override
                             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
@@ -346,7 +346,7 @@ public class DuplicateScanner {
     /** Liczy wartość dla każdego pliku równolegle; pliki z błędem odczytu są pomijane. */
     private <T> Map<ScannedFile, T> computeAll(List<ScannedFile> files, String label, Progress progress,
                                                BooleanSupplier cancelled, FileFunction<T> function) {
-        Map<ScannedFile, T> result = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<ScannedFile, T> result = new ConcurrentHashMap<>();
         if (files.isEmpty()) {
             return result;
         }
@@ -473,10 +473,10 @@ public class DuplicateScanner {
     private static String describe(Throwable e) {
         String message = e.getMessage();
         String type = e.getClass().getSimpleName();
-        if (e instanceof java.nio.file.AccessDeniedException) {
+        if (e instanceof AccessDeniedException) {
             return "brak dostępu";
         }
-        if (e instanceof java.nio.file.NoSuchFileException) {
+        if (e instanceof NoSuchFileException) {
             return "plik nie istnieje";
         }
         return message == null || message.isBlank() ? type : message;

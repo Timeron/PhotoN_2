@@ -29,6 +29,11 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.photon.JsonFileStore;
+import javafx.scene.Node;
+import javafx.scene.Parent;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 
 /** Formularz „Miniaturyzacja” w GUI (Monocle, bez ekranu i bez ruszania myszy). */
 @ExtendWith(ApplicationExtension.class)
@@ -97,7 +102,7 @@ class ThumbnailsUiTest {
         assertTrue(robot.lookup("Otwórz folder miniatur").tryQuery().isPresent());
 
         // Ustawienia zapamiętane na następny raz.
-        ThumbnailOptions saved = new com.photon.JsonFileStore<>(AppPaths.dataDir().resolve("thumbnails.json"),
+        ThumbnailOptions saved = new JsonFileStore<>(AppPaths.dataDir().resolve("thumbnails.json"),
                 ThumbnailOptions.class, ThumbnailOptions.defaults()).load();
         assertEquals(source, saved.source());
         assertEquals(800, saved.maxSide());
@@ -134,7 +139,7 @@ class ThumbnailsUiTest {
         // Zmiana → „Niezapisane zmiany” → Zapisz
         robot.interact(() -> side.getValueFactory().setValue(640));
         assertTrue(robot.lookup("Niezapisane zmiany").query().isVisible());
-        robot.clickOn(robot.lookup(".profile-bar .button").queryAllAs(javafx.scene.control.Button.class).stream()
+        robot.clickOn(robot.lookup(".profile-bar .button").queryAllAs(Button.class).stream()
                 .filter(b -> "Zapisz".equals(b.getText())).findFirst().orElseThrow());
         assertEquals(640, store.loadAll().get(0).options().maxSide());
         assertFalse(robot.lookup("Niezapisane zmiany").query().isVisible());
@@ -146,14 +151,14 @@ class ThumbnailsUiTest {
 
         // Sekcja „Profile”: profil miniatur na wspólnej liście i otwieranie go w module.
         robot.clickOn(navButton(robot, "Profile"));
-        javafx.scene.control.Button open = robot.lookup(".button").queryAllAs(javafx.scene.control.Button.class)
+        Button open = robot.lookup(".button").queryAllAs(Button.class)
                 .stream()
                 .filter(b -> "Otwórz".equals(b.getText()) && rowContains(b, "Telefon 1200"))
                 .findFirst().orElseThrow();
         robot.clickOn(open);
         @SuppressWarnings("unchecked")
-        javafx.scene.control.ComboBox<Profile<ThumbnailOptions>> combo =
-                robot.lookup(".thumbnails-view .profile-bar .combo-box").queryAs(javafx.scene.control.ComboBox.class);
+        ComboBox<Profile<ThumbnailOptions>> combo =
+                robot.lookup(".thumbnails-view .profile-bar .combo-box").queryAs(ComboBox.class);
         assertEquals("Telefon 1200", combo.getValue().name());
         // Profil był już wybrany i miał niezapisane zmiany — tak jak w duplikatach nie są one tracone.
         assertEquals(800, side.getValue());
@@ -161,13 +166,13 @@ class ThumbnailsUiTest {
 
         // „Cofnij niezapisane zmiany” wczytuje zapisany profil.
         robot.clickOn(robot.lookup(".thumbnails-view .profile-bar .button-icon").queryAllAs(
-                javafx.scene.control.Button.class).stream().findFirst().orElseThrow());
+                Button.class).stream().findFirst().orElseThrow());
         assertEquals(640, side.getValue(), "wczytano ustawienia profilu");
         assertFalse(robot.lookup("Niezapisane zmiany").query().isVisible());
     }
 
-    private static boolean rowContains(javafx.scene.Node node, String text) {
-        for (javafx.scene.Parent p = node.getParent(); p != null; p = p.getParent()) {
+    private static boolean rowContains(Node node, String text) {
+        for (Parent p = node.getParent(); p != null; p = p.getParent()) {
             boolean found = p.lookupAll(".profile-name").stream()
                     .anyMatch(n -> n instanceof Label l && text.equals(l.getText()));
             if (found) {

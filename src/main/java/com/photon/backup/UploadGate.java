@@ -19,6 +19,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Rozpoznaje pliki, które mogą być jeszcze przesyłane (np. z internetu) — takie pliki czekają.
@@ -47,7 +49,7 @@ public class UploadGate implements PhoneArchiver.FileGate {
     private Map<Path, Observation> seenThisCycle = new HashMap<>();
     private final Map<Path, Signature> ignored = new HashMap<>();
     private int changesThisCycle;
-    private java.util.Set<Path> waitedThisCycle = new java.util.HashSet<>();
+    private Set<Path> waitedThisCycle = new HashSet<>();
 
     public UploadGate(Duration quietPeriod, Clock clock) {
         this.quietPeriod = quietPeriod;
@@ -57,13 +59,13 @@ public class UploadGate implements PhoneArchiver.FileGate {
     /** Wywoływane przed każdym przebiegiem archiwizacji. */
     public synchronized void startCycle() {
         seenThisCycle = new HashMap<>();
-        waitedThisCycle = new java.util.HashSet<>();
+        waitedThisCycle = new HashSet<>();
         changesThisCycle = 0;
     }
 
     /** Pliki, które w tym przebiegu czekały (puste, rosnące, zapisywane przez inny program). */
-    public synchronized java.util.Set<Path> waitedThisCycle() {
-        return java.util.Set.copyOf(waitedThisCycle);
+    public synchronized Set<Path> waitedThisCycle() {
+        return Set.copyOf(waitedThisCycle);
     }
 
     /** Jak długo plik się nie zmienia (od pierwszej obserwacji w obecnym stanie); zero, gdy nieznany. */

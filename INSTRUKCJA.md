@@ -40,7 +40,7 @@ W folderze programu (np. `C:\Programy\PhotoN`):
 |---|---|
 | `PhotoN.exe` | Aplikacja z oknem. Można przypiąć do paska zadań lub utworzyć skrót na pulpicie. |
 | `photon-backup.exe` | Agent kopii zapasowej z konsoli (`--profile`, `--status`, `--stop`, `--list`) — patrz [5.5](#55-kopia-zapasowa-agent-w-tle). |
-| `autostart.bat` | Włącza / wyłącza uruchamianie kopii zapasowej razem z Windows — patrz [5.5a](#55a-uruchamianie-kopii-zapasowej-razem-z-windows-autostartbat). |
+| `autostart.bat` (+ `autostart.ps1`) | Włącza / wyłącza uruchamianie kopii zapasowej razem z Windows — patrz [5.5a](#55a-uruchamianie-kopii-zapasowej-razem-z-windows-autostartbat). |
 
 ### 2.2. Ze źródeł (w trakcie rozwijania)
 
@@ -279,8 +279,22 @@ w `%APPDATA%\PhotoN2\profiles\<moduł>\`.
 
 ### 5.5. Kopia zapasowa (agent w tle)
 
-Automatyczna archiwizacja według wybranego profilu „Archiwizacji telefonu”, wykonywana przez **agenta** —
+Automatyczna archiwizacja według wybranych profili „Archiwizacji telefonu”, wykonywana przez **agenta** —
 osobny, lekki program bez okna (bez JavaFX, z ograniczoną pamięcią). Działa także wtedy, gdy PhotoN jest zamknięty.
+
+**Kilka profili naraz** — w zakładce zaznacz kilka profili (pola wyboru na liście), w konsoli podaj
+`--profile` kilka razy. Jeden agent (jedna ikona, jeden proces) pilnuje wtedy wszystkich folderów źródłowych,
+a pliki z każdego trafiają do archiwum jego profilu:
+- każdy profil ma własne tempo sprawdzania, sesje (osobne podsumowania i pliki CSV), liczniki i problemy —
+  awaria dysku jednego profilu nie wstrzymuje pozostałych; zakładka pokazuje stan każdego profilu osobno,
+- wpisy dziennika i powiadomienia mają przedrostek z nazwą profilu (`[Tablet] Zarchiwizowano 3 pliki…`),
+- profile archiwizujące do **tego samego archiwum** korzystają ze wspólnego spisu archiwum — plik dodany przez
+  jeden profil od razu jest duplikatem dla drugiego,
+- agent **odmówi startu**, gdy foldery źródłowe profili się pokrywają (jeden leży w drugim — te same pliki
+  byłyby archiwizowane dwa razy) albo gdy folder źródłowy jednego profilu pokrywa się z archiwum, folderem
+  miniatur lub śmietnikiem innego (archiwizowałby cudze archiwum); komunikat wskazuje profile i foldery,
+- profile są sprawdzane po kolei w jednym wątku — przy dużej paczce w jednym profilu drugi czeka, aż skończy
+  się bieżące sprawdzenie.
 
 **Jak działa**
 - Robi to samo co „Archiwizacja telefonu”: przenosi nowe pliki do folderu z dzisiejszą datą, wykrywa duplikaty,
@@ -322,7 +336,7 @@ osobny, lekki program bez okna (bez JavaFX, z ograniczoną pamięcią). Działa 
   *od 13:05 — zarchiwizowano 120 plików (1,2 GB), czeka na przesłanie 15, 12 plików/min*. Na końcu:
   - podsumowanie w dzienniku, powiadomieniu i okienku stanu („Sesja 2026-11-19 13:05 – 14:40 (1 h 35 min):
     zarchiwizowano 1243 pliki (12,3 GB), miniatury: …, duplikaty: 15, błędy: 0.”),
-  - lista plików w CSV: `logs\sesje\sesja-RRRR-MM-DD_GGMM.csv` (czas; operacja; plik; plik w archiwum
+  - lista plików w CSV: `logs\sesje\sesja-RRRR-MM-DD_GGMM-<profil>.csv` (czas; operacja; plik; plik w archiwum
     dla duplikatów; rozmiar) — otwiera się w Excelu.
   Zatrzymanie agenta w trakcie sesji też zapisuje podsumowanie.
 - **Duplikaty**: przy akcji „śmietnik” są przenoszone automatycznie; przy akcji „usuń” nic nie jest usuwane
@@ -353,15 +367,18 @@ także gdy PhotoN jest zamknięty:
 `photon-backup --stop`, albo otwórz PhotoN → „Kopia zapasowa” → Zatrzymaj. Agent uruchomiony z PhotoN nie ma okna
 konsoli; okno konsoli jest tylko wtedy, gdy uruchomisz go sam przez `photon-backup --profile …`.
 
-**Zakładka w PhotoN** — panel sterowania: Uruchom / Zatrzymaj / Sprawdź teraz / Usuń zgłoszone duplikaty oraz
-podgląd (odświeżany co sekundę): stan, PID, od kiedy działa, ostatnie i następne sprawdzenie z bieżącym tempem,
-powiadomienia, liczniki, problemy i dziennik.
+**Zakładka w PhotoN** — panel sterowania: lista profili z polami wyboru, Uruchom / Zatrzymaj / Sprawdź teraz /
+Usuń zgłoszone duplikaty (ze wszystkich profili) oraz podgląd (odświeżany co sekundę): stan, PID, od kiedy
+działa i — osobno dla każdego profilu — ostatnie i następne sprawdzenie z bieżącym tempem, powiadomienia,
+liczniki, sesja, problemy; pod spodem dziennik.
 
 **Konsola** — w folderze programu `photon-backup.exe`, a przy pracy ze źródeł `photon-backup.bat`:
 
 ```
 photon-backup --profile "Telefon"   uruchamia agenta w tym oknie (Ctrl+C kończy)
-photon-backup --status              stan agenta (także uruchomionego z PhotoN)
+photon-backup --profile "Telefon" --profile "Tablet"   kilka profili w jednym agencie
+photon-backup --check --profile "Telefon" --profile "Tablet"   tylko sprawdza, czy profile mogą działać razem
+photon-backup --status              stan agenta (także uruchomionego z PhotoN), osobno dla każdego profilu
 photon-backup --stop                zatrzymuje agenta
 photon-backup --list                lista profili „Archiwizacji telefonu”
 ```
@@ -403,28 +420,33 @@ bez otwierania PhotoN i bez okna konsoli. Widać go jako ikonę PhotoN przy zega
    Uruchamianie razem z Windows: WYŁĄCZONE
    Agent nie działa.
 
-     1 - Włącz (wybierz profil)
+     1 - Włącz (wybierz profile)
      2 - Wyłącz
      3 - Zakończ
    ```
-3. Wciśnij **1**. Skrypt wypisze zapisane profile, np.
-   `DevTestPhone    2024-03-06 → __Telefon-Backup  •  z podfolderami …`
-4. Wpisz **nazwę profilu** dokładnie tak jak na liście (tylko nazwę, bez opisu) i zatwierdź Enterem.
+3. Wciśnij **1** i Enter. Skrypt wypisze ponumerowane profile, np.
+   ```
+     1 - Telefon
+     2 - Tablet
+   ```
+4. Wpisz **numery profili** — jeden (`1`) albo kilka (`1,2`: jeden agent pilnuje wtedy kilku folderów naraz,
+   każdy ze swoim archiwum) — i zatwierdź Enterem. Skrypt sprawdza, czy profile istnieją i czy mogą działać
+   razem (np. czy ich foldery się nie pokrywają).
 5. Na pytanie *„Uruchomić agenta teraz? [T/N]”* wciśnij **T**, jeśli kopia zapasowa ma ruszyć od razu
    (a nie dopiero po następnym zalogowaniu). Przy zegarze pojawi się ikona PhotoN.
-6. Wciśnij dowolny klawisz, aby zamknąć okno.
+6. Wciśnij Enter, aby zamknąć okno.
 
-Od tej chwili po każdym zalogowaniu agent uruchomi się sam z tym profilem.
+Od tej chwili po każdym zalogowaniu agent uruchomi się sam z wybranymi profilami.
 
 #### Wyłączenie
 
 Dwuklik `autostart.bat` → **2**. Skrypt usuwa wpis i — jeśli agent właśnie działa — pyta,
 czy go zatrzymać (**T** zatrzymuje, **N** zostawia do wylogowania).
 
-#### Zmiana profilu
+#### Zmiana profili
 
-Dwuklik `autostart.bat` → **1** i podaj nowy profil (wpis jest nadpisywany). Jeśli agent już działa,
-nowy profil zacznie obowiązywać po jego ponownym uruchomieniu (ikona → *Zatrzymaj kopię zapasową*, potem
+Dwuklik `autostart.bat` → **1** i wybierz profile od nowa (wpis jest nadpisywany). Jeśli agent już działa,
+nowe profile zaczną obowiązywać po jego ponownym uruchomieniu (ikona → *Zatrzymaj kopię zapasową*, potem
 `autostart.bat` → 1 → T albo wylogowanie i zalogowanie).
 
 #### Z konsoli (bez menu)
@@ -432,10 +454,12 @@ nowy profil zacznie obowiązywać po jego ponownym uruchomieniu (ikona → *Zatr
 | Polecenie | Co robi |
 |---|---|
 | `autostart.bat wlacz "Telefon"` | Włącza dla profilu „Telefon” (pyta tylko, czy uruchomić agenta teraz) |
+| `autostart.bat wlacz "Telefon" "Tablet"` | Włącza dla kilku profili (jeden agent) |
 | `autostart.bat wylacz` | Wyłącza (pyta, czy zatrzymać działającego agenta) |
-| `autostart.bat stan` | Pokazuje, czy jest włączone, dla jakiego profilu i czy agent działa |
+| `autostart.bat stan` | Pokazuje, czy jest włączone, dla jakich profili i czy agent działa |
 
-Kod wyjścia 1 oznacza błąd (np. nieistniejący profil) — przydatne w innych skryptach.
+Kod wyjścia 1 oznacza błąd (np. nieistniejący profil) — przydatne w innych skryptach. Logika jest
+w `autostart.ps1` (ten sam folder; `autostart.bat` tylko go uruchamia) — oba pliki muszą leżeć razem.
 
 #### Co dokładnie zapisuje
 
@@ -446,12 +470,12 @@ innych kont:
 - dane: polecenie uruchamiające agenta wbudowaną Javą programu, bez okna konsoli:
   ```
   "<folder programu>\runtime\bin\javaw.exe" -Xmx512m … -Dphoton.appLauncher="<folder programu>\PhotoN.exe"
-      -cp "<folder programu>\app\*" com.photon.backup.BackupAgent --profile "Telefon"
+      -cp "<folder programu>\app\*" com.photon.backup.BackupAgent --profile "Telefon" --profile "Tablet"
   ```
 
 Ten sam wpis widać w **Menedżerze zadań → Aplikacje autostartu** (jako „Java(TM) Platform SE binary” albo
-„OpenJDK Platform binary”) — tam też można go tymczasowo wyłączyć. Skrypt przed zapisem sprawdza, czy profil
-istnieje; nic poza tym wpisem nie zmienia.
+„OpenJDK Platform binary”) — tam też można go tymczasowo wyłączyć. Skrypt przed zapisem sprawdza (`photon-backup --check`),
+czy profile istnieją i mogą działać razem; nic poza tym wpisem nie zmienia.
 
 #### Na co uważać
 

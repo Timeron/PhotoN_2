@@ -129,8 +129,8 @@ final class ClientPool {
     private RemoteClient connect(RemoteServer server) throws IOException {
         IOException failure = lastFailure;
         if (failure != null && System.nanoTime() - lastFailureAt < RETRY_AFTER_FAILURE.toNanos()) {
-            IOException again = failure instanceof java.nio.file.AccessDeniedException
-                    ? new java.nio.file.AccessDeniedException(server.address(), null, failure.getMessage())
+            IOException again = failure instanceof AccessDeniedException
+                    ? new AccessDeniedException(server.address(), null, failure.getMessage())
                     : new IOException(failure.getMessage());
             again.addSuppressed(failure);
             throw again;

@@ -19,6 +19,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import com.photon.ui.Texts;
 
 /** Połączenie FTP / FTPS (Apache Commons Net). */
 final class FtpRemoteClient implements RemoteClient {
@@ -81,7 +82,7 @@ final class FtpRemoteClient implements RemoteClient {
         } catch (IOException e) {
             disconnect(ftp);
             throw e instanceof AccessDeniedException ? e
-                    : new IOException("Nie można połączyć z " + server.address() + ": " + message(e), e);
+                    : new IOException("Nie można połączyć z " + server.address() + ": " + Texts.errorMessage(e), e);
         }
     }
 
@@ -259,7 +260,4 @@ final class FtpRemoteClient implements RemoteClient {
         }
     }
 
-    static String message(Exception e) {
-        return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-    }
 }

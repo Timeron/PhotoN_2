@@ -13,6 +13,9 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.io.EOFException;
+import java.nio.ByteOrder;
+import java.util.Arrays;
 
 /**
  * Czy zdjęcie lub film jest kompletny — na podstawie budowy pliku, a nie tylko tego, że przestał rosnąć.
@@ -66,68 +69,34 @@ public final class MediaIntegrity {
         }
     }
 
-    /** Krótki opis dla użytkownika („niekompletny film MP4 — brak bloku moov”). */
-    public static String describe(Path file) {
-        return "plik " + file.getFileName() + " jest niekompletny (przesyłanie trwa albo zostało przerwane)";
-    }
 
     // =====================================================================
     // JPEG
     // =====================================================================
 
+    /** Wynik przejścia przez nagłówek JPEG (segmenty od SOI do SOS). */
+    private enum JpegHeader { SCAN_FOLLOWS, TRUNCATED, NOT_JPEG }
+
     private static Result jpeg(Path file, long size) throws IOException {
         if (!startsWith(file, size, new byte[]{(byte) 0xFF, (byte) 0xD8})) {
             return Result.UNKNOWN; // to nie jest JPEG (np. inny format z rozszerzeniem .jpg)
         }
-        if (size < 4) {
-            return Result.INCOMPLETE;
-        }
-        // Najczęściej plik kończy się znacznikiem EOI — wystarczy przeczytać 2 bajty.
-        if (endsWith(file, size, new byte[]{(byte) 0xFF, (byte) 0xD9}) == Result.COMPLETE && hasSos(file)) {
-            return Result.COMPLETE;
-        }
+        // Najczęściej plik kończy się znacznikiem EOI — wtedy wystarczy sprawdzić, że nagłówek jest cały.
+        boolean endsWithEoi = endsWith(file, size, new byte[]{(byte) 0xFF, (byte) 0xD9}) == Result.COMPLETE;
         try (InputStream in = new BufferedInputStream(Files.newInputStream(file), 64 * 1024)) {
-            if (in.read() != 0xFF || in.read() != 0xD8) {
-                return Result.UNKNOWN; // to nie jest JPEG (np. inny format z rozszerzeniem .jpg)
+            switch (readHeader(in)) {
+                case TRUNCATED:
+                    return Result.INCOMPLETE;
+                case NOT_JPEG:
+                    return Result.UNKNOWN;
+                default:
+                    break;
             }
-            // Segmenty nagłówka aż do SOS (każdy ma długość), potem dane obrazu aż do EOI.
-            while (true) {
-                int b = in.read();
-                if (b < 0) {
-                    return Result.INCOMPLETE;
-                }
-                if (b != 0xFF) {
-                    return Result.UNKNOWN;
-                }
-                int marker = in.read();
-                while (marker == 0xFF) {
-                    marker = in.read();
-                }
-                if (marker < 0) {
-                    return Result.INCOMPLETE;
-                }
-                if (marker == 0xD9) {
-                    return Result.UNKNOWN; // EOI bez obrazu — nietypowe
-                }
-                if (marker >= 0xD0 && marker <= 0xD7 || marker == 0x01) {
-                    continue; // znaczniki bez długości
-                }
-                int hi = in.read();
-                int lo = in.read();
-                if (lo < 0) {
-                    return Result.INCOMPLETE;
-                }
-                long length = ((hi << 8) | lo) - 2L;
-                if (length < 0) {
-                    return Result.UNKNOWN;
-                }
-                in.skipNBytes(length); // za krótki plik → EOFException → niekompletny
-                if (marker == 0xDA) {
-                    break; // SOS — dalej dane obrazu
-                }
+            if (endsWithEoi) {
+                return Result.COMPLETE;
             }
             // W danych obrazu bajt 0xFF jest zawsze „zabezpieczony” (FF 00) albo jest znacznikiem restartu,
-            // więc FF D9 oznacza koniec obrazu.
+            // więc FF D9 oznacza koniec obrazu (za nim mogą być dopisane dane, np. film „zdjęcia ruchomego”).
             int previous = -1;
             int b;
             while ((b = in.read()) >= 0) {
@@ -137,48 +106,52 @@ public final class MediaIntegrity {
                 previous = b;
             }
             return Result.INCOMPLETE;
-        } catch (java.io.EOFException e) {
-            return Result.INCOMPLETE;
         }
     }
 
-    /** Czy w nagłówku jest SOS (szybkie sprawdzenie, że to prawdziwy JPEG zakończony EOI, a nie miniatura). */
-    private static boolean hasSos(Path file) throws IOException {
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(file), 64 * 1024)) {
+    /** Przechodzi segmenty nagłówka (każdy ma długość) aż do początku danych obrazu (SOS). */
+    private static JpegHeader readHeader(InputStream in) throws IOException {
+        try {
             if (in.read() != 0xFF || in.read() != 0xD8) {
-                return false;
+                return JpegHeader.NOT_JPEG;
             }
             while (true) {
                 int b = in.read();
+                if (b < 0) {
+                    return JpegHeader.TRUNCATED;
+                }
                 if (b != 0xFF) {
-                    return false;
+                    return JpegHeader.NOT_JPEG;
                 }
                 int marker = in.read();
                 while (marker == 0xFF) {
                     marker = in.read();
                 }
-                if (marker == 0xDA) {
-                    return true;
+                if (marker < 0) {
+                    return JpegHeader.TRUNCATED;
                 }
-                if (marker < 0 || marker == 0xD9) {
-                    return false;
+                if (marker == 0xD9) {
+                    return JpegHeader.NOT_JPEG; // EOI bez obrazu — nietypowe
                 }
                 if (marker >= 0xD0 && marker <= 0xD7 || marker == 0x01) {
-                    continue;
+                    continue; // znaczniki bez długości
                 }
                 int hi = in.read();
                 int lo = in.read();
                 if (lo < 0) {
-                    return false;
+                    return JpegHeader.TRUNCATED;
                 }
                 long length = ((hi << 8) | lo) - 2L;
                 if (length < 0) {
-                    return false;
+                    return JpegHeader.NOT_JPEG;
                 }
-                in.skipNBytes(length);
+                in.skipNBytes(length); // za krótki plik → EOFException
+                if (marker == 0xDA) {
+                    return JpegHeader.SCAN_FOLLOWS;
+                }
             }
-        } catch (java.io.EOFException e) {
-            return false;
+        } catch (EOFException e) {
+            return JpegHeader.TRUNCATED;
         }
     }
 
@@ -191,7 +164,7 @@ public final class MediaIntegrity {
             return Result.INCOMPLETE;
         }
         byte[] actual = readAt(file, size - tail.length, tail.length);
-        return java.util.Arrays.equals(actual, tail) ? Result.COMPLETE : Result.INCOMPLETE;
+        return Arrays.equals(actual, tail) ? Result.COMPLETE : Result.INCOMPLETE;
     }
 
     private static Result riff(Path file, long size) throws IOException {
@@ -202,7 +175,7 @@ public final class MediaIntegrity {
         if (header[0] != 'R' || header[1] != 'I' || header[2] != 'F' || header[3] != 'F') {
             return Result.UNKNOWN;
         }
-        long declared = Integer.toUnsignedLong(ByteBuffer.wrap(header, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt()) + 8;
+        long declared = Integer.toUnsignedLong(ByteBuffer.wrap(header, 4, 4).order(ByteOrder.LITTLE_ENDIAN).getInt()) + 8;
         if (declared > size) {
             return Result.INCOMPLETE;
         }
@@ -252,7 +225,7 @@ public final class MediaIntegrity {
     }
 
     private static boolean startsWith(Path file, long size, byte[] head) throws IOException {
-        return size >= head.length && java.util.Arrays.equals(readAt(file, 0, head.length), head);
+        return size >= head.length && Arrays.equals(readAt(file, 0, head.length), head);
     }
 
     private static byte[] readAt(Path file, long offset, int length) throws IOException {
@@ -267,7 +240,7 @@ public final class MediaIntegrity {
     private static void readFully(SeekableByteChannel channel, ByteBuffer buffer) throws IOException {
         while (buffer.hasRemaining()) {
             if (channel.read(buffer) < 0) {
-                throw new java.io.EOFException();
+                throw new EOFException();
             }
         }
     }

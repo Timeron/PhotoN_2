@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import javax.imageio.ImageIO;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import com.photon.CancelledException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -97,7 +98,7 @@ class ThumbnailGeneratorTest {
     void cancellationStopsProcessing() throws Exception {
         Path source = dir.resolve("Zdjecia");
         ThumbnailMakerTest.writePhoto(source.resolve("a.jpg"), 1000, 800, false);
-        assertThrows(ThumbnailGenerator.CancelledException.class, () ->
+        assertThrows(CancelledException.class, () ->
                 new ThumbnailGenerator(new ThumbnailOptions(source, dir.resolve("M"), 200, true, false), 2)
                         .run((m, d, t) -> { }, () -> true));
     }

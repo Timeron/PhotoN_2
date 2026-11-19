@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Collection;
 
 /**
  * Katalogi chronione: każdy katalog, którego nazwa zaczyna się od {@value #PREFIX}, wraz z podkatalogami.
@@ -64,7 +65,7 @@ public final class ProtectedPaths {
      * Pierwszy chroniony katalog pliku, w którym po jego usunięciu nie zostałaby żadna z plików
      * {@code remaining} (istniejących), albo {@code null}, gdy plik można usunąć.
      */
-    public static Path blockingDir(java.util.Collection<ScannedFile> remaining, ScannedFile file) {
+    public static Path blockingDir(Collection<ScannedFile> remaining, ScannedFile file) {
         for (Path dir : protectedDirs(file.path())) {
             boolean anotherCopy = remaining.stream()
                     .filter(other -> !other.path().equals(file.path()))

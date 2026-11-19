@@ -13,6 +13,8 @@ import javafx.scene.layout.StackPane;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import com.photon.CancelledException;
+import com.photon.ui.Background;
 
 /**
  * Moduł „Szukaj duplikatów”: przełącza między formularzem konfiguracji,
@@ -105,7 +107,7 @@ public class DuplicatesModule extends StackPane {
         task.setOnFailed(e -> {
             show(form);
             Throwable error = task.getException();
-            if (error instanceof DuplicateScanner.CancelledException) {
+            if (error instanceof CancelledException) {
                 form.showStatus("Skanowanie zostało przerwane.", false);
             } else {
                 form.showStatus("Skanowanie nie powiodło się.", true);
@@ -117,12 +119,7 @@ public class DuplicatesModule extends StackPane {
         running = task;
         show(new ScanProgressView(task, "Trwa wyszukiwanie duplikatów", task::cancel));
 
-        Thread thread = new Thread(task, "photon-duplicate-scan");
-        thread.setDaemon(true);
-        if (s.lowPriorityScan()) {
-            thread.setPriority(Thread.MIN_PRIORITY);
-        }
-        thread.start();
+        Background.start(task, "photon-duplicate-scan", s.lowPriorityScan());
     }
 
     private void showResults(Outcome outcome) {

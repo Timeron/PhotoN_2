@@ -41,6 +41,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.time.Instant;
 
 /**
  * Pliki na serwerach FTP/FTPS/SFTP widziane jak zwykłe ścieżki {@link Path} — dzięki temu archiwizacja,
@@ -362,8 +363,8 @@ public final class RemoteFileSystemProvider extends FileSystemProvider {
         }
     }
 
-    private static void setModifiedQuietly(RemotePath path, java.time.Instant time) {
-        if (time == null || time.equals(java.time.Instant.EPOCH)) {
+    private static void setModifiedQuietly(RemotePath path, Instant time) {
+        if (time == null || time.equals(Instant.EPOCH)) {
             return;
         }
         String target = path.toAbsolutePath().remote();

@@ -25,6 +25,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
+import javax.imageio.plugins.jpeg.JPEGImageWriteParam;
 
 /**
  * Tworzy miniaturę jednego zdjęcia JPEG:
@@ -133,7 +134,7 @@ public final class ThumbnailMaker {
             ImageWriteParam param = writer.getDefaultWriteParam();
             param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
             param.setCompressionQuality(JPEG_QUALITY_PERCENT / 100f);
-            if (param instanceof javax.imageio.plugins.jpeg.JPEGImageWriteParam jpeg) {
+            if (param instanceof JPEGImageWriteParam jpeg) {
                 jpeg.setOptimizeHuffmanTables(true); // mniejszy plik bez straty jakości
             }
 

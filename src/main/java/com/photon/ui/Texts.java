@@ -1,5 +1,7 @@
 package com.photon.ui;
 
+import java.util.Locale;
+
 /**
  * Pomocnicze funkcje tekstowe dla interfejsu w języku polskim.
  */
@@ -32,10 +34,15 @@ public final class Texts {
             value /= 1024;
             unit++;
         }
-        return String.format(java.util.Locale.forLanguageTag("pl-PL"), "%.1f %s", value, units[unit]);
+        return String.format(Locale.forLanguageTag("pl-PL"), "%.1f %s", value, units[unit]);
     }
 
     /** Liczba wraz z odmienionym rzeczownikiem, np. „3 lokalizacje”. */
+    /** Komunikat wyjątku do pokazania użytkownikowi (nazwa klasy, gdy wyjątek nie ma komunikatu). */
+    public static String errorMessage(Throwable e) {
+        return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+    }
+
     public static String count(int n, String one, String few, String many) {
         return n + " " + plural(n, one, few, many);
     }

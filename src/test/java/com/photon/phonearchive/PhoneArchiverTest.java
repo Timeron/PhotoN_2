@@ -23,6 +23,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.photon.profiles.Profile;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.Arrays;
 
 class PhoneArchiverTest {
 
@@ -134,7 +138,7 @@ class PhoneArchiverTest {
         assertEquals(1, summary.duplicates().size());
         assertTrue(summary.moved().isEmpty());
 
-        PhoneArchiver.RemovalOutcome outcome = PhoneArchiver.removeFromSource(summary.duplicates(), false);
+        PhoneArchiver.RemovalOutcome outcome = SourceDuplicates.remove(summary.duplicates(), false);
         assertEquals(List.of(phone.resolve("IMG_1.jpg")), outcome.removed());
         assertFalse(Files.exists(phone.resolve("IMG_1.jpg")));
         assertTrue(Files.exists(archive.resolve("2020-05-01/IMG_1.jpg")));
@@ -149,7 +153,7 @@ class PhoneArchiverTest {
         PhoneArchiver.Summary summary = run(phone, archive, true);
 
         Files.delete(archive.resolve("2020-05-01/IMG_1.jpg"));
-        PhoneArchiver.RemovalOutcome outcome = PhoneArchiver.removeFromSource(summary.duplicates(), false);
+        PhoneArchiver.RemovalOutcome outcome = SourceDuplicates.remove(summary.duplicates(), false);
 
         assertTrue(outcome.removed().isEmpty());
         assertEquals(1, outcome.errors().size());
@@ -171,7 +175,7 @@ class PhoneArchiverTest {
         assertTrue(Files.exists(phone.resolve("IMG_1.jpg")), "chroniony oryginał zostaje");
         assertTrue(Files.exists(archive.resolve("2026-11-18/IMG_1.jpg")));
 
-        PhoneArchiver.RemovalOutcome outcome = PhoneArchiver.removeFromSource(summary.duplicates(), false);
+        PhoneArchiver.RemovalOutcome outcome = SourceDuplicates.remove(summary.duplicates(), false);
         assertEquals(1, outcome.skippedProtected());
         assertTrue(Files.exists(phone.resolve("IMG_2.jpg")));
     }
@@ -265,7 +269,7 @@ class PhoneArchiverTest {
                 {"name":"Stary","updatedAt":"2026-11-01T10:00:00Z",
                  "options":{"source":"C:/Telefon","target":"D:/Archiwum","includeSubfolders":true}}
                 """);
-        List<com.photon.profiles.Profile<PhoneArchiveOptions>> loaded =
+        List<Profile<PhoneArchiveOptions>> loaded =
                 new PhoneArchiveProfileStore(profiles).loadAll();
         assertEquals(1, loaded.size());
         PhoneArchiveOptions options = loaded.get(0).options();
@@ -290,7 +294,7 @@ class PhoneArchiverTest {
         PhoneArchiver.Summary summary = run(phone, archive, true);
         assertEquals(2, summary.duplicates().size());
 
-        PhoneArchiver.RemovalOutcome outcome = PhoneArchiver.moveDuplicates(summary.duplicates(), phone, dups);
+        PhoneArchiver.RemovalOutcome outcome = SourceDuplicates.move(summary.duplicates(), phone, dups);
 
         assertTrue(outcome.errors().isEmpty(), outcome.errors().toString());
         assertEquals(2, outcome.removed().size());
@@ -309,7 +313,7 @@ class PhoneArchiverTest {
         write(archive.resolve("2020-01-01/IMG_1.jpg"), "jeden");
         PhoneArchiver.Summary summary = run(phone, archive, true);
 
-        PhoneArchiver.RemovalOutcome outcome = PhoneArchiver.moveDuplicates(summary.duplicates(), phone,
+        PhoneArchiver.RemovalOutcome outcome = SourceDuplicates.move(summary.duplicates(), phone,
                 dir.resolve("Duplikaty"));
 
         assertEquals(1, outcome.skippedProtected());
@@ -340,7 +344,7 @@ class PhoneArchiverTest {
         Path phone = Files.createDirectories(dir.resolve("Telefon"));
         Path archive = dir.resolve("Archiwum");
         write(archive.resolve("2020-01-01/stare.jpg"), "stare");
-        ArchiveIndex index = new ArchiveIndex(java.time.Duration.ofMinutes(15), java.time.Clock.systemUTC());
+        ArchiveIndex index = new ArchiveIndex(Duration.ofMinutes(15), Clock.systemUTC());
         PhoneArchiveOptions options = new PhoneArchiveOptions(phone, archive, true);
 
         // Pusty folder źródłowy — archiwum nie jest czytane.
@@ -444,10 +448,10 @@ class PhoneArchiverTest {
         byte[] jpeg = Files.readAllBytes(full);
         Files.createDirectories(phone);
         Files.write(phone.resolve("IMG_ok.jpg"), jpeg);
-        Files.write(phone.resolve("IMG_cut.jpg"), java.util.Arrays.copyOf(jpeg, jpeg.length - 100));
+        Files.write(phone.resolve("IMG_cut.jpg"), Arrays.copyOf(jpeg, jpeg.length - 100));
         byte[] mp4 = MediaIntegrityTest.mp4(5000);
         Files.write(phone.resolve("VID_ok.mp4"), mp4);
-        Files.write(phone.resolve("VID_cut.mp4"), java.util.Arrays.copyOf(mp4, 3000));
+        Files.write(phone.resolve("VID_cut.mp4"), Arrays.copyOf(mp4, 3000));
 
         PhoneArchiver.Summary summary = run(phone, archive, true);
 

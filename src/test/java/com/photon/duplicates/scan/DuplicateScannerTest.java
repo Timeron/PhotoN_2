@@ -23,6 +23,8 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.Random;
+import com.photon.CancelledException;
 
 class DuplicateScannerTest {
 
@@ -177,7 +179,7 @@ class DuplicateScannerTest {
         try {
             new DuplicateScanner(options(SearchMethod.EXACT, KeepStrategy.OLDEST), null)
                     .scan((m, d, t) -> { }, () -> true);
-        } catch (DuplicateScanner.CancelledException expected) {
+        } catch (CancelledException expected) {
             return;
         }
         throw new AssertionError("Oczekiwano przerwania skanowania");
@@ -244,7 +246,7 @@ class DuplicateScannerTest {
 
     private static byte[] bytes(int size, int seed) {
         byte[] data = new byte[size];
-        new java.util.Random(seed).nextBytes(data);
+        new Random(seed).nextBytes(data);
         return data;
     }
 

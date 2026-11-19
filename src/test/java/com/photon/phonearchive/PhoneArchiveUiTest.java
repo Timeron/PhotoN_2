@@ -32,6 +32,9 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.photon.JsonFileStore;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 
 /** Formularz „Archiwizacja telefonu” w GUI (Monocle, bez ekranu i bez ruszania myszy). */
 @ExtendWith(ApplicationExtension.class)
@@ -132,8 +135,8 @@ class PhoneArchiveUiTest {
         assertFalse(options.isVisible(), "opcje miniatur ukryte, dopóki checkbox jest odznaczony");
 
         // Sekcja może być poniżej widocznej części formularza — przełączamy checkbox bez klikania w ekran.
-        javafx.scene.control.CheckBox checkBox = robot.lookup(".phone-archive-view .check-box")
-                .queryAllAs(javafx.scene.control.CheckBox.class).stream()
+        CheckBox checkBox = robot.lookup(".phone-archive-view .check-box")
+                .queryAllAs(CheckBox.class).stream()
                 .filter(c -> "Utwórz miniatury zarchiwizowanych zdjęć".equals(c.getText()))
                 .findFirst().orElseThrow();
         robot.interact(checkBox::fire);
@@ -164,7 +167,7 @@ class PhoneArchiveUiTest {
         assertEquals(640, ImageIO.read(thumbs.resolve(day).resolve("IMG_1.jpg").toFile()).getWidth());
         assertTrue(Files.exists(archive.resolve(day).resolve("IMG_1.jpg")));
 
-        PhoneArchiveOptions saved = new com.photon.JsonFileStore<>(AppPaths.dataDir().resolve("phone-archive.json"),
+        PhoneArchiveOptions saved = new JsonFileStore<>(AppPaths.dataDir().resolve("phone-archive.json"),
                 PhoneArchiveOptions.class, PhoneArchiveOptions.defaults()).load();
         assertTrue(saved.makeThumbnails());
         assertEquals(640, saved.thumbnailSide());
@@ -184,7 +187,7 @@ class PhoneArchiveUiTest {
         Node folderRow = robot.lookup(".phone-archive-view .text-field").queryAllAs(TextField.class).stream()
                 .filter(f -> "Wskaż folder, do którego trafią duplikaty".equals(f.getPromptText()))
                 .findFirst().orElseThrow().getParent();
-        javafx.scene.control.ComboBox<PhoneDuplicateAction> action = duplicateAction(robot);
+        ComboBox<PhoneDuplicateAction> action = duplicateAction(robot);
         assertEquals(PhoneDuplicateAction.MOVE_TO_FOLDER, action.getValue(), "domyślnie przenoszenie do śmietnika");
         assertTrue(folderRow.isVisible(), "pole folderu zastępczego widoczne domyślnie");
         robot.interact(() -> action.setValue(PhoneDuplicateAction.REMOVE));
@@ -254,8 +257,8 @@ class PhoneArchiveUiTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static javafx.scene.control.ComboBox<PhoneDuplicateAction> duplicateAction(FxRobot robot) {
-        return robot.lookup(".phone-archive-view .combo-box").queryAllAs(javafx.scene.control.ComboBox.class).stream()
+    private static ComboBox<PhoneDuplicateAction> duplicateAction(FxRobot robot) {
+        return robot.lookup(".phone-archive-view .combo-box").queryAllAs(ComboBox.class).stream()
                 .filter(c -> c.getValue() instanceof PhoneDuplicateAction)
                 .findFirst().orElseThrow();
     }

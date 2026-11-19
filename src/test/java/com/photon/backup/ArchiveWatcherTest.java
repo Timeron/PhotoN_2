@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.Arrays;
 
 class ArchiveWatcherTest {
 
@@ -165,7 +166,7 @@ class ArchiveWatcherTest {
 
         assertNull(report.summary());
         assertNotNull(report.problem());
-        assertTrue(AgentLoop.describe(report).startsWith("Pominięto sprawdzenie"));
+        assertTrue(AgentTexts.describe(report).startsWith("Pominięto sprawdzenie"));
     }
 
     @Test
@@ -234,7 +235,7 @@ class ArchiveWatcherTest {
         byte[] bytes = Files.readAllBytes(full);
         // Telefon przerwał wysyłanie w połowie — plik przestał rosnąć, ale jest ucięty.
         Files.createDirectories(phone);
-        Files.write(phone.resolve("IMG_1.jpg"), java.util.Arrays.copyOf(bytes, bytes.length / 2));
+        Files.write(phone.resolve("IMG_1.jpg"), Arrays.copyOf(bytes, bytes.length / 2));
         ArchiveWatcher watcher = watcher(phone, archive, PhoneDuplicateAction.REMOVE, null);
 
         watcher.runCycle(() -> false);

@@ -6,6 +6,7 @@ import com.photon.ui.Desktops;
 import com.photon.ui.Dialogs;
 import com.photon.ui.FormSection;
 import com.photon.ui.Texts;
+import com.photon.ui.Background;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.value.ChangeListener;
@@ -50,6 +51,8 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static com.photon.ui.Forms.*;
+import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Formularz ustawień aplikacji.
@@ -441,7 +444,7 @@ public class SettingsView extends BorderPane {
             }
         });
         task.setOnFailed(e -> cacheSize.setText("Nie udało się obliczyć rozmiaru."));
-        startDaemon(task, "cache-size");
+        Background.start(task, "cache-size", false);
     }
 
     private void clearCache() {
@@ -477,13 +480,7 @@ public class SettingsView extends BorderPane {
             showFeedback("Nie udało się wyczyścić pamięci podręcznej: " + task.getException().getMessage(), true);
             refreshCacheSize();
         });
-        startDaemon(task, "cache-clear");
-    }
-
-    private static void startDaemon(Task<?> task, String name) {
-        Thread thread = new Thread(task, name);
-        thread.setDaemon(true);
-        thread.start();
+        Background.start(task, "cache-clear", false);
     }
 
     // =====================================================================
@@ -503,7 +500,7 @@ public class SettingsView extends BorderPane {
         return row;
     }
 
-    private Button openFolderButton(java.util.function.Supplier<Path> folder) {
+    private Button openFolderButton(Supplier<Path> folder) {
         Button button = iconButton(MaterialDesignF.FOLDER_OPEN_OUTLINE, "Otwórz folder w Eksploratorze");
         button.setOnAction(e -> Desktops.openFolder(folder.get(),
                 error -> showFeedback("Nie udało się otworzyć folderu: " + error, true)));
@@ -517,10 +514,10 @@ public class SettingsView extends BorderPane {
         return label;
     }
 
-    private java.util.Optional<Path> chooseFolder(String title) {
+    private Optional<Path> chooseFolder(String title) {
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle(title);
         File dir = chooser.showDialog(getScene().getWindow());
-        return java.util.Optional.ofNullable(dir).map(File::toPath);
+        return Optional.ofNullable(dir).map(File::toPath);
     }
 }

@@ -158,7 +158,7 @@ public class FolderField extends HBox {
         if (isRemote()) {
             String start = isBlank() ? "/" : (getPath() != null && Locations.isRemote(getPath())
                     ? Locations.remoteFolder(getPath()) : "/");
-            Dialogs.chooseRemoteFolder(getScene().getWindow(), location.getValue(), start).ifPresent(field::setText);
+            RemoteFolderChooser.choose(getScene().getWindow(), location.getValue(), start).ifPresent(field::setText);
             return;
         }
         DirectoryChooser chooser = new DirectoryChooser();

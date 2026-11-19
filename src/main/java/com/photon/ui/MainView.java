@@ -22,6 +22,7 @@ import javafx.scene.layout.Region;
 import javafx.scene.shape.Circle;
 
 import java.util.List;
+import com.photon.backup.AgentControl;
 
 /**
  * Główny układ okna: menu boczne | przestrzeń danych, pasek statusu na dole.
@@ -84,7 +85,7 @@ public class MainView extends BorderPane {
             }
             case BACKUP -> {
                 if (backupView == null) {
-                    backupView = new BackupView(phoneArchiveProfileStore, com.photon.backup.AgentControl.createDefault());
+                    backupView = new BackupView(phoneArchiveProfileStore, AgentControl.createDefault());
                 }
                 backupView.reloadProfiles();
                 contentArea.show("Kopia zapasowa",

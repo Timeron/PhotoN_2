@@ -33,6 +33,7 @@ import java.util.function.Consumer;
 
 import static com.photon.ui.Forms.commitSpinner;
 import static com.photon.ui.Forms.fieldLabel;
+import static com.photon.ui.Forms.infoBanner;
 import static com.photon.ui.Forms.formGrid;
 import static com.photon.ui.Forms.setupSpinner;
 import static com.photon.ui.Forms.withSuffix;
@@ -207,13 +208,6 @@ public class ThumbnailsView extends BorderPane {
     }
 
 
-    private static Label infoBanner(String text) {
-        Label label = new Label(text, new FontIcon(MaterialDesignI.INFORMATION_OUTLINE));
-        label.getStyleClass().add("info-banner");
-        label.setWrapText(true);
-        label.setMaxWidth(Double.MAX_VALUE);
-        return label;
-    }
 
     private Node buildActionBar() {
         summary.getStyleClass().add("action-summary");

@@ -15,6 +15,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import com.photon.remote.Locations;
 
 /**
  * Wspólna konfiguracja JSON aplikacji (profile, ustawienia, stan okna).
@@ -56,7 +57,7 @@ public final class Json {
             @Override
             public Path deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
                 String value = p.getValueAsString();
-                return value == null || value.isBlank() ? null : com.photon.remote.Locations.parse(value);
+                return value == null || value.isBlank() ? null : Locations.parse(value);
             }
         });
 

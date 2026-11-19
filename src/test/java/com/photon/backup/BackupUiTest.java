@@ -26,11 +26,14 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.concurrent.Callable;
 
 /**
  * Zakładka „Kopia zapasowa” jako panel sterowania agentem. Agent działa tu w wątku tego samego procesu
@@ -67,10 +70,13 @@ class BackupUiTest {
         Files.createDirectories(dir.resolve("Upload"));
 
         AgentFiles files = AgentFiles.in(dir.resolve("backup"));
-        AgentControl control = new AgentControl(files, profileName -> {
-            PhoneArchiveOptions options = store.loadAll().stream().filter(p -> p.name().equals(profileName))
-                    .findFirst().orElseThrow().options();
-            loop = new AgentLoop(profileName, options, files, null, Duration.ofMillis(300), Duration.ofMillis(300),
+        AgentControl control = new AgentControl(files, profileNames -> {
+            List<AgentProfile> chosen = new ArrayList<>();
+            for (String name : profileNames) {
+                chosen.add(new AgentProfile(name, store.loadAll().stream().filter(p -> p.name().equals(name))
+                        .findFirst().orElseThrow().options()));
+            }
+            loop = new AgentLoop(chosen, files, null, Duration.ofMillis(300), Duration.ofMillis(300),
                     Duration.ofHours(1), Duration.ZERO, Duration.ofMillis(500), Clock.systemDefaultZone(), null);
             agentThread = new Thread(() -> {
                 try {
@@ -106,12 +112,11 @@ class BackupUiTest {
         write(upload.resolve("IMG_dup.jpg"), "już jest");
         write(archive.resolve("2020-01-01/IMG_dup.jpg"), "już jest");
 
-        robot.interact(() -> view.profileCombo().setValue(view.profileCombo().getItems().stream()
-                .filter(p -> p.name().equals("Telefon")).findFirst().orElseThrow()));
+        robot.interact(() -> view.selectProfiles(List.of("Telefon")));
         robot.clickOn("Uruchom");
 
         waitFor(robot, () -> view.isRunning());
-        assertTrue(view.profileCombo().isDisabled(), "profilu nie zmienia się w trakcie pracy");
+        assertTrue(view.isProfileSelectionLocked(), "profili nie zmienia się w trakcie pracy");
         Path day = archive.resolve(LocalDate.now().format(PhoneArchiver.DAY_FORMAT));
         waitFor(robot, () -> Files.exists(day.resolve("IMG_1.jpg")));
 
@@ -132,14 +137,14 @@ class BackupUiTest {
         // Zatrzymanie.
         robot.clickOn("Zatrzymaj");
         waitFor(robot, () -> !view.isRunning());
-        assertFalse(view.profileCombo().isDisabled());
+        assertFalse(view.isProfileSelectionLocked());
         waitFor(robot, () -> robot.lookup(".backup-state").queryAs(Label.class).getText().startsWith("Zatrzymany"));
         write(upload.resolve("IMG_3.jpg"), "trzy");
         Thread.sleep(1000);
         assertFalse(Files.exists(day.resolve("IMG_3.jpg")), "po zatrzymaniu nic nie jest archiwizowane");
     }
 
-    private static void waitFor(FxRobot robot, java.util.concurrent.Callable<Boolean> condition) throws Exception {
+    private static void waitFor(FxRobot robot, Callable<Boolean> condition) throws Exception {
         WaitForAsyncUtils.waitFor(20, TimeUnit.SECONDS, () -> {
             WaitForAsyncUtils.waitForFxEvents();
             return condition.call();

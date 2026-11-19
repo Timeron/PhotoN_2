@@ -10,6 +10,7 @@ import com.photon.duplicates.scan.DuplicateScanner;
 import com.photon.duplicates.scan.ScanResult;
 import com.photon.phonearchive.PhoneArchiveOptions;
 import com.photon.phonearchive.PhoneArchiver;
+import com.photon.phonearchive.SourceDuplicates;
 import com.photon.phonearchive.PhoneDuplicateAction;
 import com.photon.thumbnails.ThumbnailGenerator;
 import com.photon.thumbnails.ThumbnailMakerTest;
@@ -84,7 +85,7 @@ class RemoteWorkflowTest {
         assertTrue(Files.exists(thumbs.resolve("2026-11-19/IMG_1.jpg")));
 
         assertEquals(1, summary.duplicates().size());
-        PhoneArchiver.RemovalOutcome removed = PhoneArchiver.removeFromSource(summary.duplicates(), true);
+        PhoneArchiver.RemovalOutcome removed = SourceDuplicates.remove(summary.duplicates(), true);
         assertTrue(removed.errors().isEmpty(), removed.errors().toString());
         assertFalse(Files.exists(ftpRoot.resolve("Camera/VID_2.mp4")), "duplikat usunięty z serwera (bez kosza)");
     }
@@ -113,7 +114,7 @@ class RemoteWorkflowTest {
         assertFalse(Files.list(sftpRoot.resolve("Archiwum/2026-11-19")).anyMatch(p -> p.toString().endsWith(".photon-tmp")));
 
         assertEquals(1, summary.duplicates().size());
-        PhoneArchiver.RemovalOutcome moved = PhoneArchiver.moveDuplicates(summary.duplicates(), phone, trash);
+        PhoneArchiver.RemovalOutcome moved = SourceDuplicates.move(summary.duplicates(), phone, trash);
         assertTrue(moved.errors().isEmpty(), moved.errors().toString());
         assertEquals("już w archiwum", Files.readString(sftpRoot.resolve("Smietnik/IMG_2.jpg")));
         assertFalse(Files.exists(phone.resolve("IMG_2.jpg")));

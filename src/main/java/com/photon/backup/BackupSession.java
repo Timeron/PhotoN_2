@@ -96,15 +96,25 @@ final class BackupSession {
                 + ", duplikaty: " + duplicates + ", błędy: " + errors + ".";
     }
 
-    /** Zapisuje listę plików sesji (CSV, średnik, UTF-8 z BOM — otwiera się poprawnie w Excelu). */
-    Path writeCsv(Path folder) throws IOException {
+    /**
+     * Zapisuje listę plików sesji (CSV, średnik, UTF-8 z BOM — otwiera się poprawnie w Excelu).
+     *
+     * @param profile nazwa profilu (w nazwie pliku — przy kilku profilach sesje kończą się niezależnie)
+     */
+    Path writeCsv(Path folder, String profile) throws IOException {
         Files.createDirectories(folder);
-        Path file = folder.resolve("sesja-" + FILE_TIME.format(startedAt) + ".csv");
+        Path file = folder.resolve("sesja-" + FILE_TIME.format(startedAt) + "-" + safeName(profile) + ".csv");
         List<String> lines = new ArrayList<>();
         lines.add("﻿czas;operacja;plik;w archiwum;rozmiar (B)");
         lines.addAll(rows);
         Files.write(file, lines, StandardCharsets.UTF_8);
         return file;
+    }
+
+    /** Nazwa profilu bez znaków niedozwolonych w nazwach plików Windows. */
+    static String safeName(String name) {
+        String safe = name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        return safe.isEmpty() ? "profil" : safe;
     }
 
     int archived() {

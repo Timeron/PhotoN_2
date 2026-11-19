@@ -16,6 +16,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.StandardOpenOption;
+import com.photon.ui.Texts;
 
 /**
  * Operacje na plikach duplikatów: kosz, trwałe usunięcie, przeniesienie do folderu.
@@ -240,7 +243,7 @@ public final class DuplicateFileActions {
             logLines.add(LocalDateTime.now().format(time) + "\t" + entry
                     + "\t(zostaje: " + keeper + ")" + suffix);
         } catch (IOException | RuntimeException e) {
-            errors.add(path + ": " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            errors.add(path + ": " + Texts.errorMessage(e));
         }
     }
 
@@ -248,8 +251,8 @@ public final class DuplicateFileActions {
         if (log != null && !logLines.isEmpty()) {
             try {
                 Files.createDirectories(log.toAbsolutePath().getParent());
-                Files.write(log, logLines, java.nio.charset.StandardCharsets.UTF_8,
-                        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                Files.write(log, logLines, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             } catch (IOException e) {
                 errors.add("Nie udało się zapisać dziennika operacji: " + e.getMessage());
             }

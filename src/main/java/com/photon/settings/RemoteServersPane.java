@@ -34,6 +34,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static com.photon.ui.Forms.*;
+import java.nio.file.NoSuchFileException;
+import com.photon.ui.Texts;
+import com.photon.ui.Background;
 
 /**
  * Konfiguracja serwerów zdalnych (FTP, FTPS, SFTP) — jedna dla całej aplikacji. W zakładkach wybiera się
@@ -249,27 +252,18 @@ public class RemoteServersPane extends VBox {
         String folder = testFolder.getText();
         test.setDisable(true);
         showResult("Łączenie z " + server.address() + "…", false);
-        Thread thread = new Thread(() -> {
-            try {
-                RemoteClient.TestResult outcome = RemoteClient.test(server, folder);
-                Platform.runLater(() -> {
-                    if (editedHostKey == null && outcome.hostKey() != null) {
-                        editedHostKey = outcome.hostKey();
-                        updateProtocol();
-                    }
-                    showResult(outcome.message(), false);
-                });
-            } catch (IOException | RuntimeException e) {
-                String text = e instanceof java.nio.file.NoSuchFileException
-                        ? "Połączono, ale folder " + folder + " nie istnieje na serwerze."
-                        : (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-                Platform.runLater(() -> showResult("Test nieudany: " + text, true));
-            } finally {
-                Platform.runLater(() -> test.setDisable(false));
+        Background.supply("remote-test", () -> RemoteClient.test(server, folder), outcome -> {
+            test.setDisable(false);
+            if (editedHostKey == null && outcome.hostKey() != null) {
+                editedHostKey = outcome.hostKey();
+                updateProtocol();
             }
-        }, "remote-test");
-        thread.setDaemon(true);
-        thread.start();
+            showResult(outcome.message(), false);
+        }, e -> {
+            test.setDisable(false);
+            showResult("Test nieudany: " + (e instanceof NoSuchFileException
+                    ? "Połączono, ale folder " + folder + " nie istnieje na serwerze." : Texts.errorMessage(e)), true);
+        });
     }
 
     private void saveEdited() {

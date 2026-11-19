@@ -17,6 +17,9 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Agent uruchomiony tak, jak robi to PhotoN: osobny proces Javy, ścieżka klas bez JavaFX.
@@ -35,7 +38,7 @@ class AgentProcessTest {
                 .save(new Profile<>("Telefon", Instant.now(),
                         new PhoneArchiveOptions(upload, dir.resolve("Archiwum"), true)));
 
-        List<String> command = AgentControl.command("Telefon", data.toString());
+        List<String> command = AgentControl.command(List.of("Telefon"), data.toString());
         String classPath = command.get(command.indexOf("-cp") + 1);
         for (String entry : classPath.split(File.pathSeparator)) {
             assertFalse(entry.replace('\\', '/').contains("/org/openjfx/"), "JavaFX na ścieżce klas agenta: " + entry);
@@ -48,12 +51,12 @@ class AgentProcessTest {
                 new AgentFiles(data.resolve("backup"), data.resolve("logs").resolve("kopia-zapasowa.log"), out), null);
         try {
             WaitForAsyncUtils.waitFor(30, TimeUnit.SECONDS,
-                    () -> control.isRunning() && control.readStatus().map(s -> s.lastCheck() != null && s.eventDriven()).orElse(false));
+                    () -> control.isRunning() && control.readStatus().map(s -> s.profiles().get(0).schedule().lastCheck() != null && s.profiles().get(0).schedule().eventDriven()).orElse(false));
             AgentStatus status = control.readStatus().orElseThrow();
             assertEquals(AgentStatus.State.RUNNING, status.state());
             assertEquals(process.pid(), status.pid());
-            assertEquals("Telefon", status.profile());
-            assertEquals(3600, status.intervalSeconds(), "domyślnie kontrolne sprawdzanie co godzinę");
+            assertEquals("Telefon", status.profiles().get(0).profile());
+            assertEquals(3600, status.profiles().get(0).schedule().intervalSeconds(), "domyślnie kontrolne sprawdzanie co godzinę");
 
             control.send(AgentCommand.of(AgentCommand.Type.STOP));
             assertTrue(process.waitFor(30, TimeUnit.SECONDS), "agent zakończył się po poleceniu");
@@ -69,10 +72,10 @@ class AgentProcessTest {
 
     @Test
     void consoleCommandsWorkWithoutRunningAgent() {
-        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-        java.io.PrintStream out = new java.io.PrintStream(bytes, true, java.nio.charset.StandardCharsets.UTF_8);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        PrintStream out = new PrintStream(bytes, true, StandardCharsets.UTF_8);
         assertEquals(BackupAgent.EXIT_ERROR, BackupAgent.run(new String[]{"--profile", "Nie ma takiego"}, out));
-        assertTrue(bytes.toString(java.nio.charset.StandardCharsets.UTF_8).contains("Nie ma profilu"));
+        assertTrue(bytes.toString(StandardCharsets.UTF_8).contains("Nie ma profilu"));
         assertEquals(BackupAgent.EXIT_OK, BackupAgent.run(new String[]{"--help"}, out));
         assertEquals(BackupAgent.EXIT_ERROR, BackupAgent.run(new String[]{"--nieznane"}, out));
     }

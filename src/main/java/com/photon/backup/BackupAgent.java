@@ -11,15 +11,22 @@ import com.photon.settings.AppSettings;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import com.photon.remote.RemoteFileSystemProvider;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 
 /**
  * Agent kopii zapasowej uruchamiany bez interfejsu graficznego (z PhotoN albo z konsoli).
  * <pre>
  *   photon-backup --profile "Telefon"   uruchamia archiwizację w tle według profilu (Ctrl+C kończy)
+ *   photon-backup --profile "Telefon" --profile "Tablet"   kilka profili naraz (jeden agent)
  *   photon-backup --status              pokazuje stan agenta
  *   photon-backup --stop                prosi działającego agenta o zatrzymanie
  *   photon-backup --list                wypisuje profile „Archiwizacji telefonu”
@@ -28,8 +35,8 @@ import java.util.concurrent.TimeUnit;
  */
 public final class BackupAgent {
 
-    private static final java.time.format.DateTimeFormatter TIME =
-            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(java.time.ZoneId.systemDefault());
+    private static final DateTimeFormatter TIME =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
 
     public static final int EXIT_OK = 0;
     public static final int EXIT_ERROR = 1;
@@ -52,7 +59,14 @@ public final class BackupAgent {
         AgentControl control = new AgentControl(files, null);
         try {
             return switch (args[0]) {
-                case "--profile" -> args.length < 2 ? usage(out) : runAgent(args[1], files, out);
+                case "--profile" -> {
+                    List<String> names = profileNames(args);
+                    yield names == null ? usage(out) : runAgent(names, files, out);
+                }
+                case "--check" -> {
+                    List<String> names = profileNames(Arrays.copyOfRange(args, 1, args.length));
+                    yield names == null ? usage(out) : check(names, out);
+                }
                 case "--status" -> status(control, out);
                 case "--stop" -> stop(control, out);
                 case "--list" -> list(out);
@@ -64,16 +78,51 @@ public final class BackupAgent {
         }
     }
 
-    private static int runAgent(String profileName, AgentFiles files, PrintStream out) throws IOException {
-        Optional<Profile<PhoneArchiveOptions>> profile = PhoneArchiveProfileStore.createDefault().loadAll().stream()
-                .filter(p -> p.name().equals(profileName)).findFirst();
-        if (profile.isEmpty()) {
-            out.println("Nie ma profilu „" + profileName + "”. Dostępne profile: photon-backup --list");
+    /** Nazwy z {@code --profile A --profile B …}; null, gdy argumenty są niepoprawne. */
+    static List<String> profileNames(String[] args) {
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < args.length; i += 2) {
+            if (!"--profile".equals(args[i]) || i + 1 >= args.length || args[i + 1].isBlank()) {
+                return null;
+            }
+            names.add(args[i + 1]);
+        }
+        return names;
+    }
+
+    /** Profile o podanych nazwach albo null (komunikat o błędzie wypisany), gdy nie mogą działać razem. */
+    private static List<AgentProfile> loadProfiles(List<String> profileNames, PrintStream out) throws IOException {
+        List<Profile<PhoneArchiveOptions>> stored = PhoneArchiveProfileStore.createDefault().loadAll();
+        List<AgentProfile> profiles = new ArrayList<>();
+        for (String name : profileNames) {
+            Optional<Profile<PhoneArchiveOptions>> profile = stored.stream()
+                    .filter(p -> p.name().equals(name)).findFirst();
+            if (profile.isEmpty()) {
+                out.println("Nie ma profilu „" + name + "”. Dostępne profile: photon-backup --list");
+                return null;
+            }
+            profiles.add(new AgentProfile(name, profile.get().options()));
+        }
+        String problem = AgentProfile.validate(profiles);
+        if (problem != null) {
+            out.println(problem);
+            return null;
+        }
+        return profiles;
+    }
+
+    /** Sprawdza, czy profile mogą działać razem (bez uruchamiania agenta) — np. przed włączeniem autostartu. */
+    private static int check(List<String> profileNames, PrintStream out) throws IOException {
+        if (loadProfiles(profileNames, out) == null) {
             return EXIT_ERROR;
         }
-        String problem = profile.get().options().validate();
-        if (problem != null) {
-            out.println("Profil „" + profileName + "”: " + problem);
+        out.println("OK");
+        return EXIT_OK;
+    }
+
+    private static int runAgent(List<String> profileNames, AgentFiles files, PrintStream out) throws IOException {
+        List<AgentProfile> profiles = loadProfiles(profileNames, out);
+        if (profiles == null) {
             return EXIT_ERROR;
         }
         AppSettings settings = new JsonFileStore<>(AppPaths.settingsFile(), AppSettings.class, AppSettings.defaults())
@@ -85,12 +134,12 @@ public final class BackupAgent {
         HashCache cache = new HashCache(settings.effectiveCacheDir().resolve("hashes").resolve("backup-agent.json"))
                 .load();
         // Dziennik na konsolę tylko wtedy, gdy agent działa w oknie konsoli (z PhotoN — bez konsoli).
-        AgentLoop loop = AgentLoop.withDefaults(profileName, profile.get().options(), files, cache,
-                AgentSettings.load(files), System.console() != null ? out : null);
+        AgentLoop loop = AgentLoop.withDefaults(profiles, files, cache, AgentSettings.load(files),
+                System.console() != null ? out : null);
 
         // Ikona w zasobniku systemowym (obok zegara) — gdy system ją obsługuje.
         Optional<AgentTray> tray = AgentTray.install(loop, settings.notifyOnFinish());
-        BackupLog.append(files.logFile(), java.time.Instant.now(), tray.isPresent()
+        BackupLog.append(files.logFile(), Instant.now(), tray.isPresent()
                 ? "Ikona w zasobniku systemowym aktywna" + (settings.notifyOnFinish() ? " (z powiadomieniami)." : ".")
                 : "Zasobnik systemowy niedostępny — agent działa bez ikony.");
 
@@ -112,7 +161,7 @@ public final class BackupAgent {
             return EXIT_ALREADY_RUNNING;
         } finally {
             tray.ifPresent(AgentTray::remove);
-            com.photon.remote.RemoteFileSystemProvider.instance().closeAll();
+            RemoteFileSystemProvider.instance().closeAll();
             finished.countDown();
             try {
                 Runtime.getRuntime().removeShutdownHook(hook);
@@ -127,24 +176,29 @@ public final class BackupAgent {
         Optional<AgentStatus> status = control.readStatus();
         out.println(running ? "Agent działa." : "Agent nie działa.");
         status.ifPresent(s -> {
-            out.println("Profil: " + s.profile() + "  (" + s.source() + " → " + s.target() + ")");
             if (running) {
-                out.println("PID: " + s.pid() + ", od: " + s.startedAt());
-                out.println("Ostatnie sprawdzenie: " + (s.lastCheck() == null ? "—" : TIME.format(s.lastCheck()))
-                        + ", następne: " + s.nextCheckText(TIME));
-                out.println("Sesja: " + s.sessionText(TIME));
-                if (!s.stalled().isEmpty()) {
-                    out.println("Przesyłanie stoi (" + s.stalled().size() + "): " + s.stalled());
-                }
+                out.println("PID: " + s.pid() + ", od: " + TIME.format(s.startedAt()));
             } else if (s.stoppedAt() != null) {
-                out.println("Zatrzymany: " + s.stoppedAt());
+                out.println("Zatrzymany: " + TIME.format(s.stoppedAt()));
             }
-            out.println("Zarchiwizowano: " + s.archived() + ", miniatury: " + s.thumbnails()
-                    + ", duplikaty do śmietnika: " + s.movedDuplicates()
-                    + ", duplikaty do decyzji: " + s.pendingDuplicates().size()
-                    + ", czeka (przesyłanie): " + s.waiting() + ", błędy: " + s.errors());
-            if (s.lastProblem() != null) {
-                out.println("Problem: " + s.lastProblem());
+            for (AgentStatus.ProfileStatus p : s.profiles()) {
+                out.println();
+                out.println("Profil: " + p.profile() + "  (" + p.source() + " → " + p.target() + ")");
+                if (running) {
+                    out.println("  Ostatnie sprawdzenie: " + (p.schedule().lastCheck() == null ? "—"
+                            : TIME.format(p.schedule().lastCheck())) + ", następne: " + p.schedule().nextCheckText(TIME));
+                    out.println("  Sesja: " + p.sessionText(TIME));
+                    if (!p.stalled().isEmpty()) {
+                        out.println("  Przesyłanie stoi (" + p.stalled().size() + "): " + p.stalled());
+                    }
+                }
+                out.println("  Zarchiwizowano: " + p.archived() + ", miniatury: " + p.thumbnails()
+                        + ", duplikaty do śmietnika: " + p.movedDuplicates()
+                        + ", duplikaty do decyzji: " + p.pendingDuplicates().size()
+                        + ", czeka (przesyłanie): " + p.waiting() + ", błędy: " + p.errors());
+                if (p.lastProblem() != null) {
+                    out.println("  Problem: " + p.lastProblem());
+                }
             }
         });
         out.println("Dziennik: " + AgentFiles.defaults().logFile());
@@ -191,6 +245,10 @@ public final class BackupAgent {
                 PhotoN — kopia zapasowa w tle (archiwizacja telefonu)
 
                   photon-backup --profile "NAZWA"   uruchamia archiwizację według profilu (Ctrl+C kończy)
+                  photon-backup --profile "A" --profile "B"   kilka profili naraz — każdy ze swoim
+                                                    folderem źródłowym i archiwum
+                  photon-backup --check --profile "A" [--profile "B"]   sprawdza, czy profile mogą działać
+                                                    razem (bez uruchamiania)
                   photon-backup --status            pokazuje stan agenta
                   photon-backup --stop              zatrzymuje działającego agenta
                   photon-backup --list              wypisuje profile „Archiwizacji telefonu”

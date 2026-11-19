@@ -40,6 +40,7 @@ import javafx.scene.layout.VBox;
 import com.photon.remote.Locations;
 import com.photon.remote.RemoteServers;
 import com.photon.ui.Dialogs;
+import com.photon.ui.RemoteFolderChooser;
 import com.photon.ui.FolderField;
 import javafx.stage.DirectoryChooser;
 import org.kordamp.ikonli.Ikon;
@@ -69,6 +70,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
+import javafx.application.Platform;
 
 /**
  * Formularz konfiguracji wyszukiwania duplikatów zdjęć i filmów.
@@ -201,7 +203,7 @@ public class DuplicateSearchView extends BorderPane {
         remove.disableProperty().bind(noSelection);
 
         Button addRemote = remoteButton("Z serwera…", "Dodaj folder z serwera zdalnego (Ustawienia → Serwery zdalne)");
-        addRemote.setOnAction(e -> Dialogs.chooseServerFolder(getScene().getWindow())
+        addRemote.setOnAction(e -> RemoteFolderChooser.chooseOnAnyServer(getScene().getWindow())
                 .ifPresent(p -> addUnique(locations, p)));
         HBox toolbar = new HBox(8, add, addRemote, spacer(), up, down, remove);
         toolbar.setAlignment(Pos.CENTER_LEFT);
@@ -218,7 +220,7 @@ public class DuplicateSearchView extends BorderPane {
         removeExclusion.disableProperty().bind(exclusionList.getSelectionModel().selectedItemProperty().isNull());
 
         Button excludeRemote = remoteButton("Z serwera…", "Wyklucz folder na serwerze zdalnym");
-        excludeRemote.setOnAction(e -> Dialogs.chooseServerFolder(getScene().getWindow())
+        excludeRemote.setOnAction(e -> RemoteFolderChooser.chooseOnAnyServer(getScene().getWindow())
                 .ifPresent(p -> addUnique(exclusions, p)));
         HBox exclusionToolbar = new HBox(8, fieldLabel("Foldery wykluczone ze skanowania"), spacer(),
                 addExclusion, excludeRemote, removeExclusion);
@@ -706,11 +708,11 @@ public class DuplicateSearchView extends BorderPane {
     /** Przycisk dodawania folderu z serwera — widoczny, gdy zdefiniowano serwery zdalne. */
     private static Button remoteButton(String text, String tooltip) {
         Button button = new Button(text, new FontIcon(MaterialDesignS.SERVER_NETWORK));
-        button.setTooltip(new javafx.scene.control.Tooltip(tooltip));
+        button.setTooltip(new Tooltip(tooltip));
         Runnable refresh = () -> button.setVisible(!RemoteServers.all().isEmpty());
         refresh.run();
         button.managedProperty().bind(button.visibleProperty());
-        RemoteServers.addListener(() -> javafx.application.Platform.runLater(refresh));
+        RemoteServers.addListener(() -> Platform.runLater(refresh));
         return button;
     }
 

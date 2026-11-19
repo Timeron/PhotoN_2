@@ -33,6 +33,8 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import javafx.scene.Node;
+import javafx.scene.control.ListCell;
 
 /**
  * Pełna ścieżka w GUI: profil → skanowanie → wyniki z filtrowaniem i sortowaniem.
@@ -114,8 +116,8 @@ class DuplicateScanUiTest {
         assertEquals(List.of("wideo.mp4"), names(results));
         robot.clickOn(type);
         // Tekst zaczynający się od kropki TestFX traktuje jak selektor CSS — szukamy etykiety wprost.
-        robot.clickOn(robot.lookup(n -> n instanceof javafx.scene.control.ListCell<?> cell
-                && ".JPG".equals(cell.getText())).queryAs(javafx.scene.Node.class));
+        robot.clickOn(robot.lookup(n -> n instanceof ListCell<?> cell
+                && ".JPG".equals(cell.getText())).queryAs(Node.class));
         assertEquals(List.of("foto.jpg"), names(results));
         robot.clickOn("Wyczyść filtry");
         assertEquals(2, results.visibleGroups().size());

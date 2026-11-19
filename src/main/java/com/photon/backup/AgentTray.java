@@ -25,6 +25,8 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.time.Instant;
+import java.util.stream.Collectors;
 
 /**
  * Ikona agenta kopii zapasowej w zasobniku systemowym (obok zegara). Pokazuje, że agent działa,
@@ -149,7 +151,7 @@ public final class AgentTray implements AgentLoop.Observer {
 
     @Override
     public void notify(String title, String message, boolean warning) {
-        String line = eventLine(java.time.Instant.now(), message, warning);
+        String line = eventLine(Instant.now(), message, warning);
         synchronized (recent) {
             recent.addFirst(line);
             while (recent.size() > MAX_RECENT) {
@@ -184,7 +186,7 @@ public final class AgentTray implements AgentLoop.Observer {
     }
 
     /** Wiersz listy ostatnich zdarzeń, np. {@code 12:48:00  Nowe duplikaty czekają na decyzję: 6.} */
-    static String eventLine(java.time.Instant at, String message, boolean warning) {
+    static String eventLine(Instant at, String message, boolean warning) {
         return TIME.format(at) + "  " + (warning ? "⚠ " : "") + message.replace("\n", " ");
     }
 
@@ -194,7 +196,7 @@ public final class AgentTray implements AgentLoop.Observer {
 
     /** Dymek ikony (krótki — Windows ucina dłuższe). */
     static String tooltip(AgentStatus s) {
-        StringBuilder text = new StringBuilder("PhotoN — kopia zapasowa: ").append(s.profile());
+        StringBuilder text = new StringBuilder("PhotoN — kopia zapasowa: ").append(s.profileNames());
         if (s.checking()) {
             text.append("\nSprawdzanie…");
         } else if (s.lastCheck() != null) {
@@ -204,9 +206,7 @@ public final class AgentTray implements AgentLoop.Observer {
         if (!s.pendingDuplicates().isEmpty()) {
             text.append(", duplikaty do decyzji: ").append(s.pendingDuplicates().size());
         }
-        if (s.lastProblem() != null) {
-            text.append("\nProblem: ").append(s.lastProblem());
-        }
+        s.problems().stream().findFirst().ifPresent(p -> text.append("\nProblem: ").append(p));
         return text.length() <= MAX_TOOLTIP ? text.toString() : text.substring(0, MAX_TOOLTIP - 1) + "…";
     }
 
@@ -215,37 +215,44 @@ public final class AgentTray implements AgentLoop.Observer {
         if (s.state() == AgentStatus.State.STOPPED) {
             return "Zatrzymany";
         }
-        return (s.checking() ? "Sprawdzanie…" : "Działa") + " — profil „" + s.profile() + "”";
+        return (s.checking() ? "Sprawdzanie…" : "Działa") + " — "
+                + (s.profiles().size() == 1 ? "profil " : "profile ") + s.profileNames();
     }
 
-    /** Pełny stan (powiadomienie po wybraniu „Pokaż stan”). */
+    /** Pełny stan (okienko „Pokaż stan”) — osobno dla każdego profilu. */
     static String details(AgentStatus s) {
         StringBuilder text = new StringBuilder();
-        text.append("Profil: ").append(s.profile());
-        text.append("\nOstatnie sprawdzenie: ").append(s.lastCheck() == null ? "—" : TIME.format(s.lastCheck()));
-        text.append("\nNastępne: ").append(s.nextCheckText(TIME));
-        if (s.session() != null || s.lastSession() != null) {
-            text.append("\nSesja: ").append(s.sessionText(TIME));
-        }
-        if (!s.stalled().isEmpty()) {
-            text.append("\nPrzesyłanie stoi: ").append(s.stalled().size()).append(" — wyślij ponownie: ")
-                    .append(s.stalled().stream().limit(5).map(p -> String.valueOf(p.getFileName()))
-                            .collect(java.util.stream.Collectors.joining(", ")));
-        }
-        text.append("\nZarchiwizowano: ").append(s.archived())
-                .append(", miniatury: ").append(s.thumbnails())
-                .append(", do śmietnika: ").append(s.movedDuplicates());
-        if (!s.pendingDuplicates().isEmpty()) {
-            text.append("\nDuplikaty do decyzji: ").append(s.pendingDuplicates().size()).append(" (usuń w PhotoN)");
-        }
-        if (s.waiting() > 0) {
-            text.append("\nW trakcie przesyłania: ").append(s.waiting());
-        }
-        if (s.errors() > 0) {
-            text.append("\nBłędy: ").append(s.errors());
-        }
-        if (s.lastProblem() != null) {
-            text.append("\nProblem: ").append(s.lastProblem());
+        for (AgentStatus.ProfileStatus p : s.profiles()) {
+            if (!text.isEmpty()) {
+                text.append("\n\n");
+            }
+            text.append("Profil: ").append(p.profile());
+            text.append("\nOstatnie sprawdzenie: ").append(p.schedule().lastCheck() == null ? "—"
+                    : TIME.format(p.schedule().lastCheck()));
+            text.append("\nNastępne: ").append(p.schedule().nextCheckText(TIME));
+            if (p.session() != null || p.lastSession() != null) {
+                text.append("\nSesja: ").append(p.sessionText(TIME));
+            }
+            if (!p.stalled().isEmpty()) {
+                text.append("\nPrzesyłanie stoi: ").append(p.stalled().size()).append(" — wyślij ponownie: ")
+                        .append(p.stalled().stream().limit(5).map(f -> String.valueOf(f.getFileName()))
+                                .collect(Collectors.joining(", ")));
+            }
+            text.append("\nZarchiwizowano: ").append(p.archived())
+                    .append(", miniatury: ").append(p.thumbnails())
+                    .append(", do śmietnika: ").append(p.movedDuplicates());
+            if (!p.pendingDuplicates().isEmpty()) {
+                text.append("\nDuplikaty do decyzji: ").append(p.pendingDuplicates().size()).append(" (usuń w PhotoN)");
+            }
+            if (p.waiting() > 0) {
+                text.append("\nW trakcie przesyłania: ").append(p.waiting());
+            }
+            if (p.errors() > 0) {
+                text.append("\nBłędy: ").append(p.errors());
+            }
+            if (p.lastProblem() != null) {
+                text.append("\nProblem: ").append(p.lastProblem());
+            }
         }
         return text.toString();
     }

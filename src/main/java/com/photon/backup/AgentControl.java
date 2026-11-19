@@ -22,9 +22,9 @@ import java.util.UUID;
  */
 public class AgentControl {
 
-    /** Uruchamia agenta dla profilu (osobny proces albo — w testach — wątek). */
+    /** Uruchamia agenta dla profili (osobny proces albo — w testach — wątek). */
     public interface Launcher {
-        void launch(String profileName) throws IOException;
+        void launch(List<String> profileNames) throws IOException;
     }
 
     /** Opcje JVM agenta: mała sterta, oddawanie nieużywanej pamięci systemowi, lżejsza kompilacja JIT. */
@@ -44,7 +44,7 @@ public class AgentControl {
     /** Sterowanie domyślnym agentem; uruchamia go jako osobny proces Javy bez okna konsoli. */
     public static AgentControl createDefault() {
         AgentFiles files = AgentFiles.defaults();
-        return new AgentControl(files, profile -> startProcess(files, profile));
+        return new AgentControl(files, profiles -> startProcess(files, profiles));
     }
 
     public AgentFiles files() {
@@ -95,14 +95,18 @@ public class AgentControl {
         Json.writeAtomically(files.commands().resolve(name), command);
     }
 
-    public void start(String profileName) throws IOException {
+    /** Uruchamia agenta dla jednego albo kilku profili (obsługiwanych przez jeden proces). */
+    public void start(List<String> profileNames) throws IOException {
         if (launcher == null) {
             throw new IOException("Uruchamianie agenta nie jest dostępne.");
+        }
+        if (profileNames.isEmpty()) {
+            throw new IOException("Wybierz co najmniej jeden profil.");
         }
         if (isRunning()) {
             throw new IOException("Agent już działa.");
         }
-        launcher.launch(profileName);
+        launcher.launch(List.copyOf(profileNames));
     }
 
     // =====================================================================
@@ -110,12 +114,15 @@ public class AgentControl {
     // =====================================================================
 
     /** Polecenie uruchomienia agenta tą samą Javą i z tą samą ścieżką klas co PhotoN. */
-    static List<String> command(String profileName) {
-        return command(profileName, System.getProperty(AppPaths.DATA_DIR_PROPERTY));
+    static List<String> command(List<String> profileNames) {
+        return command(profileNames, System.getProperty(AppPaths.DATA_DIR_PROPERTY));
     }
 
-    /** @param dataDir folder danych PhotoN przekazywany agentowi (null = domyślny) */
-    static List<String> command(String profileName, String dataDir) {
+    /**
+     * @param profileNames profile obsługiwane przez agenta (każdy jako osobne {@code --profile})
+     * @param dataDir      folder danych PhotoN przekazywany agentowi (null = domyślny)
+     */
+    static List<String> command(List<String> profileNames, String dataDir) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable());
         command.addAll(JVM_OPTIONS);
@@ -130,8 +137,10 @@ public class AgentControl {
         command.add("-cp");
         command.add(agentClassPath(System.getProperty("java.class.path")));
         command.add(BackupAgent.class.getName());
-        command.add("--profile");
-        command.add(profileName);
+        for (String profile : profileNames) {
+            command.add("--profile");
+            command.add(profile);
+        }
         return command;
     }
 
@@ -164,9 +173,9 @@ public class AgentControl {
         return ProcessHandle.current().info().command().orElse("java");
     }
 
-    private static void startProcess(AgentFiles files, String profileName) throws IOException {
+    private static void startProcess(AgentFiles files, List<String> profileNames) throws IOException {
         Files.createDirectories(files.consoleFile().toAbsolutePath().getParent());
-        ProcessBuilder builder = new ProcessBuilder(command(profileName))
+        ProcessBuilder builder = new ProcessBuilder(command(profileNames))
                 .redirectErrorStream(true)
                 .redirectOutput(files.consoleFile().toFile())
                 .redirectInput(ProcessBuilder.Redirect.from(nullDevice()));

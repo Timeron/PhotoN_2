@@ -37,6 +37,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import javafx.scene.control.ContentDisplay;
 
 /**
  * Lista wszystkich zapisanych profili ze wszystkich modułów.
@@ -265,7 +266,7 @@ public class ProfilesView extends BorderPane {
             row.getStyleClass().add("profile-row");
 
             // Karta ma wypełniać całą szerokość listy (ListCell domyślnie daje grafice jej preferowaną szerokość).
-            setContentDisplay(javafx.scene.control.ContentDisplay.GRAPHIC_ONLY);
+            setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
             setPrefWidth(0);
             row.prefWidthProperty().bind(widthProperty().subtract(2));
 

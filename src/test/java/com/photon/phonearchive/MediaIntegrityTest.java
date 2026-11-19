@@ -18,6 +18,7 @@ import static com.photon.phonearchive.MediaIntegrity.Result.COMPLETE;
 import static com.photon.phonearchive.MediaIntegrity.Result.INCOMPLETE;
 import static com.photon.phonearchive.MediaIntegrity.Result.UNKNOWN;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import java.nio.ByteOrder;
 
 /** Rozpoznawanie uciętych zdjęć i filmów (przerwane przesyłanie). */
 class MediaIntegrityTest {
@@ -68,7 +69,7 @@ class MediaIntegrityTest {
     void webpAndOtherFormats() throws IOException {
         byte[] webp = new byte[100];
         System.arraycopy("RIFF".getBytes(StandardCharsets.US_ASCII), 0, webp, 0, 4);
-        ByteBuffer.wrap(webp, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(92);
+        ByteBuffer.wrap(webp, 4, 4).order(ByteOrder.LITTLE_ENDIAN).putInt(92);
         System.arraycopy("WEBP".getBytes(StandardCharsets.US_ASCII), 0, webp, 8, 4);
         assertEquals(COMPLETE, check("a.webp", webp));
         assertEquals(INCOMPLETE, check("cut.webp", Arrays.copyOf(webp, 60)));

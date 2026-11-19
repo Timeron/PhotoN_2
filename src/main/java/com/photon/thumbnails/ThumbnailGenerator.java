@@ -19,6 +19,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
+import java.util.concurrent.ExecutionException;
+import com.photon.CancelledException;
+import com.photon.ui.Texts;
 
 /**
  * Tworzy miniatury wszystkich zdjęć JPEG z folderu źródłowego (równolegle).
@@ -32,11 +35,6 @@ public final class ThumbnailGenerator {
         void update(String message, long done, long total);
     }
 
-    public static final class CancelledException extends RuntimeException {
-        public CancelledException() {
-            super("Przerwano");
-        }
-    }
 
     /**
      * @param resized          zmniejszone zdjęcia
@@ -122,7 +120,7 @@ public final class ThumbnailGenerator {
                         sourceBytes.addAndGet(Files.size(file));
                         thumbnailBytes.addAndGet(Files.size(out));
                     } catch (IOException | RuntimeException | OutOfMemoryError e) {
-                        errors.add(file + ": " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                        errors.add(file + ": " + Texts.errorMessage(e));
                     } finally {
                         int n = done.incrementAndGet();
                         progress.update("Tworzenie miniatur: " + n + " z " + total + "  •  " + file.getFileName(),
@@ -136,7 +134,7 @@ public final class ThumbnailGenerator {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new CancelledException();
-                } catch (java.util.concurrent.ExecutionException e) {
+                } catch (ExecutionException e) {
                     errors.add(String.valueOf(e.getCause()));
                 }
             }

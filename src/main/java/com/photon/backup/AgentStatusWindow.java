@@ -17,6 +17,8 @@ import java.awt.GraphicsEnvironment;
 import java.awt.Image;
 import java.awt.Rectangle;
 import java.util.List;
+import java.awt.Component;
+import java.awt.Dimension;
 
 /**
  * Okienko ze stanem agenta, otwierane z ikony w zasobniku („Pokaż stan”). W odróżnieniu od powiadomień
@@ -88,7 +90,7 @@ final class AgentStatusWindow {
         JScrollPane eventsScroll = new JScrollPane(events);
         eventsScroll.setBorder(BorderFactory.createEmptyBorder());
         eventsScroll.getViewport().setBackground(PANEL);
-        eventsScroll.setPreferredSize(new java.awt.Dimension(460, 110));
+        eventsScroll.setPreferredSize(new Dimension(460, 110));
         center.add(section("Ostatnie zdarzenia", eventsScroll));
 
         JPanel root = new JPanel(new BorderLayout(0, 12));
@@ -99,7 +101,7 @@ final class AgentStatusWindow {
         root.add(buttons, BorderLayout.SOUTH);
         frame.setContentPane(root);
         frame.setSize(560, 400);
-        frame.setMinimumSize(new java.awt.Dimension(480, 320));
+        frame.setMinimumSize(new Dimension(480, 320));
     }
 
     /** Pokazuje okno w prawym dolnym rogu ekranu (nad paskiem zadań) i wysuwa je na wierzch. */
@@ -150,7 +152,7 @@ final class AgentStatusWindow {
         return area;
     }
 
-    private static JPanel section(String title, java.awt.Component content) {
+    private static JPanel section(String title, Component content) {
         JLabel label = new JLabel(title.toUpperCase());
         label.setForeground(MUTED);
         label.setFont(label.getFont().deriveFont(Font.BOLD, 11f));

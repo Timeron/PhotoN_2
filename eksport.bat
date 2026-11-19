@@ -63,8 +63,10 @@ jpackage --type app-image --name PhotoN --app-version %APP_VERSION% --vendor Pho
     --dest "%DIST%"
 if errorlevel 1 goto :error
 
-rem Skrypt włączający uruchamianie agenta razem z Windows - działa z folderu programu.
+rem Skrypt włączający uruchamianie agenta razem z Windows (autostart.bat + autostart.ps1) - działa z folderu programu.
 copy /y "autostart.bat" "%DIST%\PhotoN\autostart.bat" >nul
+if errorlevel 1 goto :error
+copy /y "autostart.ps1" "%DIST%\PhotoN\autostart.ps1" >nul
 if errorlevel 1 goto :error
 
 echo [4/4] Pakowanie do ZIP...

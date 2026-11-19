@@ -8,6 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Instant;
 
 /**
  * Pamięć podręczna odcisków plików między skanowaniami. Wpis jest ważny, dopóki
@@ -86,9 +88,9 @@ public class HashCache {
 
     /** Suma SHA-256 pliku — z pamięci, gdy plik się nie zmienił, inaczej liczona i zapamiętywana. */
     public String sha256(Path path) throws IOException {
-        java.nio.file.attribute.BasicFileAttributes attrs =
-                Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
-        java.time.Instant modified = attrs.lastModifiedTime().toInstant();
+        BasicFileAttributes attrs =
+                Files.readAttributes(path, BasicFileAttributes.class);
+        Instant modified = attrs.lastModifiedTime().toInstant();
         ScannedFile scanned = new ScannedFile(path, attrs.size(), modified, modified, 0);
         Entry entry = get(scanned);
         if (entry.sha256() == null) {

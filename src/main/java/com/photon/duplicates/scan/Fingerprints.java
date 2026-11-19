@@ -32,6 +32,7 @@ import java.util.Iterator;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
+import com.drew.imaging.ImageProcessingException;
 
 /**
  * „Odciski” plików używane do rozpoznawania duplikatów.
@@ -170,7 +171,7 @@ public final class Fingerprints {
             } else {
                 metadata = ImageMetadataReader.readMetadata(file.toFile());
             }
-        } catch (com.drew.imaging.ImageProcessingException e) {
+        } catch (ImageProcessingException e) {
             return null;
         }
 

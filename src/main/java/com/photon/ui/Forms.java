@@ -15,6 +15,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import org.kordamp.ikonli.Ikon;
 import org.kordamp.ikonli.javafx.FontIcon;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignI;
 
 /**
  * Wspólne elementy formularzy (etykiety, podpowiedzi, siatki, spinnery).
@@ -84,6 +85,15 @@ public final class Forms {
         field.getStyleClass().add("read-only");
         field.setFocusTraversable(false);
         return field;
+    }
+
+    /** Ramka z informacją (ikona „i”, zawijany tekst). */
+    public static Label infoBanner(String text) {
+        Label label = new Label(text, new FontIcon(MaterialDesignI.INFORMATION_OUTLINE));
+        label.getStyleClass().add("info-banner");
+        label.setWrapText(true);
+        label.setMaxWidth(Double.MAX_VALUE);
+        return label;
     }
 
     public static Label fieldLabel(String text) {

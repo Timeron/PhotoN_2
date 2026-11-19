@@ -46,6 +46,19 @@ class AgentTrayTest {
     }
 
     @Test
+    void severalProfilesAreDescribedSeparately() {
+        AgentStatus status = new AgentStatus(AgentStatus.State.RUNNING, 123, Instant.now(), null,
+                List.of(profile("Telefon", 2, null), profile("Tablet", 3, "Folder do archiwizacji nie istnieje")));
+        assertEquals("Działa — profile „Telefon”, „Tablet”", AgentTray.stateLine(status));
+        assertEquals(5, status.archived());
+        assertEquals(2, status.pendingDuplicates().size());
+        String details = AgentTray.details(status);
+        assertTrue(details.contains("Profil: Telefon") && details.contains("Profil: Tablet"), details);
+        assertTrue(details.contains("Problem: Folder do archiwizacji nie istnieje"), details);
+        assertTrue(AgentTray.tooltip(status).contains("Zarchiwizowano: 5"));
+    }
+
+    @Test
     void recentEventLinesAreSingleLineWithTime() {
         Instant at = Instant.parse("2026-11-19T11:48:00Z");
         String line = AgentTray.eventLine(at, "Zarchiwizowano 2 pliki do 2026-11-19.\nBłędy: 1 — szczegóły w dzienniku.", true);
@@ -81,10 +94,15 @@ class AgentTrayTest {
     }
 
     private static AgentStatus status(String profile, int archived, String problem) {
+        return new AgentStatus(AgentStatus.State.RUNNING, 123, Instant.now(), null,
+                List.of(profile(profile, archived, problem)));
+    }
+
+    private static AgentStatus.ProfileStatus profile(String profile, int archived, String problem) {
         Instant now = Instant.now();
-        return new AgentStatus(AgentStatus.State.RUNNING, 123, profile, Path.of("C:\\Telefon"), Path.of("D:\\Archiwum"),
-                now, now, now, now.plusSeconds(15), 15, false, true, false, archived, 0, 0, 0, 0,
+        return new AgentStatus.ProfileStatus(profile, Path.of("C:\\Telefon"), Path.of("D:\\Archiwum"),
+                new AgentStatus.Schedule(now, now.plusSeconds(15), 15, false, true, false, false), archived, 0, 0, 0, 0,
                 List.of(new AgentStatus.PendingDuplicate(Path.of("C:\\Telefon\\a.jpg"), Path.of("D:\\Archiwum\\a.jpg"), 1)),
-                problem, null, false, null, null, List.of());
+                problem, null, null, List.of());
     }
 }

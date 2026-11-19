@@ -14,6 +14,9 @@ import javafx.scene.layout.StackPane;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import javafx.stage.Window;
+import com.photon.CancelledException;
+import com.photon.ui.Background;
 
 /**
  * Moduł „Miniaturyzacja”: formularz ↔ postęp tworzenia miniatur.
@@ -88,7 +91,7 @@ public class ThumbnailsModule extends StackPane {
         task.setOnFailed(e -> {
             show(form);
             Throwable error = task.getException();
-            if (error instanceof ThumbnailGenerator.CancelledException) {
+            if (error instanceof CancelledException) {
                 form.showStatus("Tworzenie miniatur zostało przerwane.", false);
             } else {
                 form.showStatus("Tworzenie miniatur nie powiodło się.", true);
@@ -98,12 +101,7 @@ public class ThumbnailsModule extends StackPane {
 
         running = task;
         show(new ScanProgressView(task, "Trwa tworzenie miniatur", task::cancel));
-        Thread thread = new Thread(task, "photon-thumbnails");
-        thread.setDaemon(true);
-        if (settings.get().lowPriorityScan()) {
-            thread.setPriority(Thread.MIN_PRIORITY);
-        }
-        thread.start();
+        Background.start(task, "photon-thumbnails", settings.get().lowPriorityScan());
     }
 
     private void finished(ThumbnailOptions options, ThumbnailGenerator.Summary summary) {
@@ -147,7 +145,7 @@ public class ThumbnailsModule extends StackPane {
         getChildren().setAll(page);
     }
 
-    private javafx.stage.Window window() {
+    private Window window() {
         return getScene() == null ? null : getScene().getWindow();
     }
 }

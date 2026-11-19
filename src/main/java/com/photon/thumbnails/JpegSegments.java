@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * Niskopoziomowa obsługa pliku JPEG jako listy segmentów (markerów).
@@ -68,7 +69,7 @@ final class JpegSegments {
     /** Plik rozbity na segmenty nagłówka i resztę (od SOS do końca) w postaci surowej. */
     record Parsed(List<Segment> segments, byte[] imageData) {
 
-        Segment find(java.util.function.Predicate<Segment> test) {
+        Segment find(Predicate<Segment> test) {
             return segments.stream().filter(test).findFirst().orElse(null);
         }
     }

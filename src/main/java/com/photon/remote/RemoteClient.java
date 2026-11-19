@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.Instant;
 import java.util.List;
+import com.photon.ui.Texts;
 
 /**
  * Jedno połączenie z serwerem (FTP/FTPS/SFTP). Nie jest bezpieczne wątkowo — używane przez jeden wątek
@@ -71,7 +72,7 @@ public interface RemoteClient extends Closeable {
             int count = client.list(dir).size();
             long ms = (System.nanoTime() - start) / 1_000_000;
             String text = "Połączono z " + server.address() + " w " + ms + " ms. Folder " + dir + ": "
-                    + com.photon.ui.Texts.count(count, "pozycja", "pozycje", "pozycji") + ".";
+                    + Texts.count(count, "pozycja", "pozycje", "pozycji") + ".";
             if (client.hostKey() != null) {
                 text += "\nKlucz serwera: " + client.hostKey()
                         + (server.hostKey() == null ? " (zostanie zapamiętany)." : " (zgodny z zapamiętanym).");

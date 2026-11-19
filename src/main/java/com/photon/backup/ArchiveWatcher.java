@@ -4,6 +4,7 @@ import com.photon.duplicates.scan.HashCache;
 import com.photon.phonearchive.ArchiveIndex;
 import com.photon.phonearchive.PhoneArchiveOptions;
 import com.photon.phonearchive.PhoneArchiver;
+import com.photon.phonearchive.SourceDuplicates;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,6 +18,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Archiwizacja w tle według profilu „Archiwizacji telefonu”: każdy przebieg ({@link #runCycle}) przenosi
@@ -116,12 +119,21 @@ public class ArchiveWatcher {
      */
     public ArchiveWatcher(String profileName, PhoneArchiveOptions options, HashCache cache,
                           Duration quietPeriod, Clock clock) {
+        this(profileName, options, cache, quietPeriod, clock, new ArchiveIndex(INDEX_MAX_AGE, clock));
+    }
+
+    /**
+     * @param index spis archiwum — wspólny dla profili archiwizujących do tego samego archiwum (plik dodany
+     *              przez jeden profil od razu jest duplikatem dla drugiego)
+     */
+    public ArchiveWatcher(String profileName, PhoneArchiveOptions options, HashCache cache,
+                          Duration quietPeriod, Clock clock, ArchiveIndex index) {
         this.profileName = profileName;
         this.options = options;
         this.cache = cache;
         this.clock = clock;
         this.gate = new UploadGate(quietPeriod, clock);
-        this.index = new ArchiveIndex(INDEX_MAX_AGE, clock);
+        this.index = index;
     }
 
     /** Spis archiwum (do testów i diagnostyki). */
@@ -167,7 +179,7 @@ public class ArchiveWatcher {
             }
         }
         // Przesyłanie stoi: plik czeka (niekompletny, pusty, zablokowany) i od dawna się nie zmienia.
-        java.util.Set<Path> waitingFiles = new java.util.TreeSet<>(gate.waitedThisCycle());
+        Set<Path> waitingFiles = new TreeSet<>(gate.waitedThisCycle());
         waitingFiles.addAll(summary.incomplete());
         List<Path> stalled = waitingFiles.stream()
                 .filter(f -> gate.unchangedFor(f).compareTo(STALL_AFTER) >= 0).toList();
@@ -180,7 +192,7 @@ public class ArchiveWatcher {
         List<PhoneArchiver.Duplicate> fresh = new ArrayList<>();
         if (options.movesDuplicates()) {
             if (!summary.duplicates().isEmpty()) {
-                moved = PhoneArchiver.moveDuplicates(summary.duplicates(), options.source(), options.duplicatesTarget());
+                moved = SourceDuplicates.move(summary.duplicates(), options.source(), options.duplicatesTarget());
             }
         } else {
             synchronized (pendingLock) {
@@ -223,7 +235,7 @@ public class ArchiveWatcher {
 
     /** Usuwa oczekujące duplikaty z folderu źródłowego (kopie w archiwum zostają). */
     public PhoneArchiver.RemovalOutcome removePending(List<PhoneArchiver.Duplicate> duplicates, boolean toTrash) {
-        PhoneArchiver.RemovalOutcome outcome = PhoneArchiver.removeFromSource(duplicates, toTrash);
+        PhoneArchiver.RemovalOutcome outcome = SourceDuplicates.remove(duplicates, toTrash);
         synchronized (pendingLock) {
             outcome.removed().forEach(path -> {
                 pending.remove(path);

@@ -19,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import org.testfx.util.WaitForAsyncUtils;
 
 /** Wbudowane serwery FTP i SFTP do testów (pliki serwera leżą w folderze tymczasowym). */
 public final class TestServers implements AutoCloseable {
@@ -84,7 +85,7 @@ public final class TestServers implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        org.testfx.util.WaitForAsyncUtils.clearExceptions();
+        WaitForAsyncUtils.clearExceptions();
     }
 
     private static int freePort() throws IOException {

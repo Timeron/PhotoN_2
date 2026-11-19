@@ -31,6 +31,8 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.photon.phonearchive.PhoneArchiver;
+import java.util.concurrent.TimeoutException;
 
 /** Konfiguracja serwera w Ustawieniach i wybór folderu na serwerze w zakładce (GUI bez ekranu). */
 @ExtendWith(ApplicationExtension.class)
@@ -123,12 +125,12 @@ class RemoteUiTest {
         robot.clickOn(".action-bar .button-primary");
         try {
             WaitForAsyncUtils.waitFor(30, TimeUnit.SECONDS, () -> feedback(robot).startsWith("Zarchiwizowano"));
-        } catch (java.util.concurrent.TimeoutException e) {
+        } catch (TimeoutException e) {
             throw new AssertionError("Komunikat: " + feedback(robot) + " | okna: "
                     + robot.lookup(".dialog-title").queryAllAs(Label.class).stream().map(Label::getText).toList()
                     + " | " + robot.lookup(".dialog-message").queryAllAs(Label.class).stream().map(Label::getText).toList(), e);
         }
-        Path day = archive.resolve(LocalDate.now().format(com.photon.phonearchive.PhoneArchiver.DAY_FORMAT));
+        Path day = archive.resolve(LocalDate.now().format(PhoneArchiver.DAY_FORMAT));
         assertEquals("zdjęcie z serwera", Files.readString(day.resolve("IMG_1.jpg")));
         assertFalse(Files.exists(ftpRoot.resolve("upload/IMG_1.jpg")), "przeniesione z serwera");
         assertTrue(Files.readString(AppPaths.dataDir().resolve("phone-archive.json")).contains("[NAS]/upload"),

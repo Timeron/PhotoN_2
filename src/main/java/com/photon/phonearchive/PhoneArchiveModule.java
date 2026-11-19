@@ -19,6 +19,9 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
+import javafx.stage.Window;
+import com.photon.CancelledException;
+import com.photon.ui.Background;
 
 /**
  * Moduł „Archiwizacja telefonu”: formularz ↔ postęp archiwizacji ↔ pytanie o usunięcie duplikatów.
@@ -121,7 +124,7 @@ public class PhoneArchiveModule extends StackPane {
             show(form);
             form.refreshDateFolders();
             Throwable error = task.getException();
-            if (error instanceof PhoneArchiver.CancelledException) {
+            if (error instanceof CancelledException) {
                 form.showStatus("Archiwizacja została przerwana. Przeniesione pliki pozostały w archiwum.", false);
             } else if (error instanceof PhoneArchiver.InsufficientSpaceException) {
                 form.showStatus("Archiwizacja przerwana — za mało miejsca na dysku.", true);
@@ -139,12 +142,7 @@ public class PhoneArchiveModule extends StackPane {
 
         running = task;
         show(new ScanProgressView(task, "Trwa archiwizacja", task::cancel));
-        Thread thread = new Thread(task, "photon-phone-archive");
-        thread.setDaemon(true);
-        if (settings.get().lowPriorityScan()) {
-            thread.setPriority(Thread.MIN_PRIORITY);
-        }
-        thread.start();
+        Background.start(task, "photon-phone-archive", settings.get().lowPriorityScan());
     }
 
     private void finished(PhoneArchiveOptions options, PhoneArchiver.Summary summary) {
@@ -219,7 +217,7 @@ public class PhoneArchiveModule extends StackPane {
             details.add(d.source() + "   →   " + existing);
         }
         boolean move = options.movesDuplicates();
-        boolean toTrash = !move && PhoneArchiver.trashSupported();
+        boolean toTrash = !move && SourceDuplicates.trashSupported();
         Path folder = options.duplicatesTarget();
         String intro = Texts.count(duplicates.size(), "plik", "pliki", "plików") + " ("
                 + Texts.formatBytes(bytes) + ") z folderu archiwizowanego już jest w archiwum, więc nie "
@@ -241,8 +239,8 @@ public class PhoneArchiveModule extends StackPane {
         Task<PhoneArchiver.RemovalOutcome> task = new Task<>() {
             @Override
             protected PhoneArchiver.RemovalOutcome call() {
-                return move ? PhoneArchiver.moveDuplicates(duplicates, source, folder)
-                        : PhoneArchiver.removeFromSource(duplicates, toTrash);
+                return move ? SourceDuplicates.move(duplicates, source, folder)
+                        : SourceDuplicates.remove(duplicates, toTrash);
             }
         };
         task.setOnSucceeded(e -> {
@@ -270,16 +268,14 @@ public class PhoneArchiveModule extends StackPane {
                 + task.getException().getMessage(), true));
         running = task;
         form.showStatus(move ? "Przenoszenie duplikatów…" : "Usuwanie duplikatów…", false);
-        Thread thread = new Thread(task, "photon-phone-archive-duplicates");
-        thread.setDaemon(true);
-        thread.start();
+        Background.start(task, "photon-phone-archive-duplicates", false);
     }
 
     private void show(Node page) {
         getChildren().setAll(page);
     }
 
-    private javafx.stage.Window window() {
+    private Window window() {
         return getScene() == null ? null : getScene().getWindow();
     }
 }

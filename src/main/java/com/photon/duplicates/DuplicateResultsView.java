@@ -12,6 +12,7 @@ import com.photon.AppPaths;
 import com.photon.ui.Desktops;
 import com.photon.ui.Dialogs;
 import com.photon.ui.Texts;
+import com.photon.ui.Background;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -83,6 +84,12 @@ import static com.photon.ui.Forms.fieldLabel;
 import static com.photon.ui.Forms.linkButton;
 import static com.photon.ui.Forms.setupSpinner;
 import static com.photon.ui.Forms.spacer;
+import java.util.Collections;
+import javafx.beans.binding.Bindings;
+import javafx.collections.ListChangeListener;
+import javafx.scene.input.Clipboard;
+import javafx.stage.Window;
+import org.kordamp.ikonli.Ikon;
 
 /**
  * Wyniki wyszukiwania duplikatów: grupy plików z sortowaniem i filtrowaniem
@@ -356,7 +363,7 @@ public class DuplicateResultsView extends BorderPane {
         return box;
     }
 
-    private static Button iconButton(org.kordamp.ikonli.Ikon icon, String tooltip) {
+    private static Button iconButton(Ikon icon, String tooltip) {
         Button button = new Button(null, new FontIcon(icon));
         button.getStyleClass().add("button-icon");
         button.setTooltip(new Tooltip(tooltip));
@@ -426,7 +433,7 @@ public class DuplicateResultsView extends BorderPane {
         // Ctrl+klik dodaje/odejmuje plik z zaznaczenia, Shift+klik zaznacza zakres.
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.getSelectionModel().getSelectedItems().addListener(
-                (javafx.collections.ListChangeListener<TreeItem<Row>>) c -> refreshSelectionBar());
+                (ListChangeListener<TreeItem<Row>>) c -> refreshSelectionBar());
         table.setOnKeyPressed(e -> {
             if (e.getCode() == KeyCode.DELETE && !selectedFiles().isEmpty()) {
                 removeSelected();
@@ -435,7 +442,7 @@ public class DuplicateResultsView extends BorderPane {
 
         Label placeholder = new Label();
         placeholder.getStyleClass().add("list-placeholder");
-        placeholder.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(
+        placeholder.textProperty().bind(Bindings.createStringBinding(
                 () -> groups.isEmpty()
                         ? "Nie znaleziono duplikatów. Wszystkie przeanalizowane pliki są unikalne."
                         : "Żadna grupa nie pasuje do filtrów.",
@@ -565,7 +572,7 @@ public class DuplicateResultsView extends BorderPane {
         copy.setOnAction(e -> {
             ClipboardContent content = new ClipboardContent();
             content.putString(path.toString());
-            javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
+            Clipboard.getSystemClipboard().setContent(content);
         });
         ContextMenu menu = new ContextMenu(show, open, new SeparatorMenuItem(), copy);
         if (row.isGroup()) {
@@ -774,9 +781,7 @@ public class DuplicateResultsView extends BorderPane {
             setDisable(false);
             showError(task.getException().getMessage());
         });
-        Thread thread = new Thread(task, "photon-duplicate-action");
-        thread.setDaemon(true);
-        thread.start();
+        Background.start(task, "photon-duplicate-action", false);
     }
 
     /** Liczba kopii, które obejmie działanie automatyczne (bez plików z chronionych katalogów). */
@@ -818,7 +823,7 @@ public class DuplicateResultsView extends BorderPane {
             }
             groups = updated;
             result = result.withGroups(updated);
-            Set<DuplicateGroup> keep = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            Set<DuplicateGroup> keep = Collections.newSetFromMap(new IdentityHashMap<>());
             keep.addAll(updated);
             treeItems.keySet().retainAll(keep);
             Set<Path> existing = new HashSet<>();
@@ -881,7 +886,7 @@ public class DuplicateResultsView extends BorderPane {
     }
 
     public Set<Path> keptFiles() {
-        return java.util.Collections.unmodifiableSet(kept);
+        return Collections.unmodifiableSet(kept);
     }
 
     private void refreshSelectionBar() {
@@ -1015,9 +1020,7 @@ public class DuplicateResultsView extends BorderPane {
             setDisable(false);
             showError(task.getException().getMessage());
         });
-        Thread thread = new Thread(task, "photon-duplicate-remove-selected");
-        thread.setDaemon(true);
-        thread.start();
+        Background.start(task, "photon-duplicate-remove-selected", false);
     }
 
     private void exportCsv() {
@@ -1049,7 +1052,7 @@ public class DuplicateResultsView extends BorderPane {
         Dialogs.error(window(), "Błąd", message);
     }
 
-    private javafx.stage.Window window() {
+    private Window window() {
         return getScene() == null ? null : getScene().getWindow();
     }
 }

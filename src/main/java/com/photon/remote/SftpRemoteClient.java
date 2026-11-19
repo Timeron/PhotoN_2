@@ -26,6 +26,8 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Vector;
+import java.util.Arrays;
+import com.photon.ui.Texts;
 
 /**
  * Połączenie SFTP (JSch). Klucz serwera jest zapamiętywany przy pierwszym udanym połączeniu
@@ -79,7 +81,7 @@ final class SftpRemoteClient implements RemoteClient {
                         + server.hostKey() + ", teraz " + keys.seen + "). To może oznaczać podszywanie się pod serwer. "
                         + "Jeśli serwer był reinstalowany, wyczyść zapamiętany klucz w Ustawieniach → Serwery.", e);
             }
-            String text = FtpRemoteClient.message(e);
+            String text = Texts.errorMessage(e);
             if (text.toLowerCase().contains("auth")) {
                 throw new AccessDeniedException(server.address(), null,
                         "logowanie nieudane — sprawdź użytkownika i hasło (" + text + ")");
@@ -220,7 +222,7 @@ final class SftpRemoteClient implements RemoteClient {
             case ChannelSftp.SSH_FX_FAILURE -> new AccessDeniedException(path, null,
                     e.getMessage() == null ? "operacja odrzucona przez serwer" : e.getMessage());
             case 11 /* SSH_FX_FILE_ALREADY_EXISTS (v5+) */ -> new FileAlreadyExistsException(path);
-            default -> new IOException(path + ": " + FtpRemoteClient.message(e), e);
+            default -> new IOException(path + ": " + Texts.errorMessage(e), e);
         };
     }
 
@@ -321,7 +323,7 @@ final class SftpRemoteClient implements RemoteClient {
         public String[] promptKeyboardInteractive(String destination, String name, String instruction,
                                                   String[] prompt, boolean[] echo) {
             String[] answers = new String[prompt.length];
-            java.util.Arrays.fill(answers, password);
+            Arrays.fill(answers, password);
             return answers;
         }
     }

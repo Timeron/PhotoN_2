@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import javafx.scene.control.TreeTableCell;
 
 /** Zaznaczanie wielu plików (Ctrl+klik), ręczna ochrona i usuwanie zaznaczonych — w GUI bez ekranu. */
 @ExtendWith(ApplicationExtension.class)
@@ -137,7 +138,7 @@ class DuplicateSelectionUiTest {
     }
 
     private static Node cell(FxRobot robot, Path path) {
-        return robot.lookup(".tree-table-cell").queryAllAs(javafx.scene.control.TreeTableCell.class).stream()
+        return robot.lookup(".tree-table-cell").queryAllAs(TreeTableCell.class).stream()
                 .filter(c -> path.toString().equals(c.getText()))
                 .findFirst().orElseThrow(() -> new AssertionError("Brak wiersza " + path));
     }

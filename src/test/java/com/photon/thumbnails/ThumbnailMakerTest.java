@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.io.ByteArrayOutputStream;
 
 public class ThumbnailMakerTest {
 
@@ -155,7 +156,7 @@ public class ThumbnailMakerTest {
         g.setColor(new Color(30, 60, 200));
         g.fillRect(width / 2, 0, width - width / 2, height);
         g.dispose();
-        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         ImageIO.write(image, "jpg", bytes);
 
         JpegSegments.Parsed parsed = JpegSegments.parse(bytes.toByteArray());

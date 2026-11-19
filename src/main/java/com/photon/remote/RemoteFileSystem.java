@@ -17,6 +17,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.nio.file.FileSystems;
+import java.nio.file.attribute.BasicFileAttributeView;
+import java.nio.file.attribute.FileAttributeView;
 
 /**
  * Pliki jednego połączenia z {@link RemoteServers}. Obiekt istnieje przez cały czas działania programu;
@@ -178,7 +181,7 @@ final class RemoteFileSystem extends FileSystem {
 
     @Override
     public PathMatcher getPathMatcher(String syntaxAndPattern) {
-        PathMatcher local = java.nio.file.FileSystems.getDefault().getPathMatcher(syntaxAndPattern);
+        PathMatcher local = FileSystems.getDefault().getPathMatcher(syntaxAndPattern);
         return path -> local.matches(Path.of(((RemotePath) path).remote().replaceFirst("^/", "")));
     }
 
@@ -236,8 +239,8 @@ final class RemoteFileSystem extends FileSystem {
         }
 
         @Override
-        public boolean supportsFileAttributeView(Class<? extends java.nio.file.attribute.FileAttributeView> type) {
-            return type == java.nio.file.attribute.BasicFileAttributeView.class;
+        public boolean supportsFileAttributeView(Class<? extends FileAttributeView> type) {
+            return type == BasicFileAttributeView.class;
         }
 
         @Override

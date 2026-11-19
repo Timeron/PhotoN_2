@@ -10,7 +10,6 @@ import com.photon.thumbnails.ThumbnailMaker;
 import com.photon.remote.Locations;
 import com.photon.ui.Texts;
 
-import java.awt.Desktop;
 import java.io.IOException;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
@@ -19,7 +18,6 @@ import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -32,8 +30,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
-import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import com.photon.CancelledException;
 
 /**
  * Archiwizacja zdjęć i filmów: każdy plik z folderu źródłowego, którego jeszcze nie ma w archiwum
@@ -49,11 +47,6 @@ public class PhoneArchiver {
         void update(String message, long done, long total);
     }
 
-    public static class CancelledException extends RuntimeException {
-        public CancelledException() {
-            super("Archiwizacja została przerwana");
-        }
-    }
 
     /**
      * Archiwum (np. dysk sieciowy) jest niedostępne albo nie dało się go w całości odczytać. Przebieg jest
@@ -130,7 +123,6 @@ public class PhoneArchiver {
     public static final DateTimeFormatter DAY_FORMAT =
             DateTimeFormatter.ofPattern("uuuu-MM-dd").withResolverStyle(ResolverStyle.STRICT);
     private static final Pattern DAY_PATTERN = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
-    private static final String TMP_SUFFIX = ".photon-tmp";
 
     private final PhoneArchiveOptions options;
     private final LocalDate today;
@@ -244,7 +236,7 @@ public class PhoneArchiver {
         try {
             folders = listDateFolders(target);
         } catch (IOException e) {
-            throw new ArchiveUnavailableException("Nie udało się odczytać folderu archiwum " + target + ": " + message(e));
+            throw new ArchiveUnavailableException("Nie udało się odczytać folderu archiwum " + target + ": " + Texts.errorMessage(e));
         }
         if (folders.isEmpty() && expectDateFolders) {
             throw new ArchiveUnavailableException("W archiwum " + target + " nie widać żadnego folderu z datą, "
@@ -267,35 +259,80 @@ public class PhoneArchiver {
     // =====================================================================
 
     public Summary run(Progress progress, BooleanSupplier cancelled) {
-        long start = System.nanoTime();
-        Path source = options.source().toAbsolutePath().normalize();
-        Path target = options.target().toAbsolutePath().normalize();
-        String day = today.format(DAY_FORMAT);
-        Path dayFolder = target.resolve(day);
-        Path thumbFolder = options.makeThumbnails()
-                ? options.thumbnailTarget().toAbsolutePath().normalize().resolve(day) : null;
-        int thumbsCreated = 0;
-        int thumbsExisting = 0;
-        int thumbsUnsupported = 0;
-        int waiting = 0;
-        List<String> errors = new ArrayList<>();
+        return new Run(progress, cancelled).execute();
+    }
 
-        progress.update("Wyszukiwanie zdjęć i filmów w folderze archiwizowanym…", -1, 1);
-        List<Path> media = collectSource(source, target, errors, cancelled);
+    /** Jeden przebieg archiwizacji: jego stan (listy, liczniki) i kolejne kroki. */
+    private final class Run {
+        private final long start = System.nanoTime();
+        private final Progress progress;
+        private final BooleanSupplier cancelled;
+        private final Path source;
+        private final Path target;
+        private final Path dayFolder;
+        /** Folder miniatur z dzisiejszą datą albo null (miniatury wyłączone). */
+        private final Path thumbFolder;
+        private final List<String> errors = new ArrayList<>();
+        private final List<Path> moved = new ArrayList<>();
+        private final List<Path> copied = new ArrayList<>();
+        private final List<Path> incomplete = new ArrayList<>();
+        private final List<Duplicate> duplicates = new ArrayList<>();
+        private int waiting;
+        private int thumbsCreated;
+        private int thumbsExisting;
+        private int thumbsUnsupported;
+        private long archivedBytes;
+        private boolean newArchive;
+        private Map<Long, List<Path>> index;
+        private FreeSpace archiveSpace;
+        private FreeSpace thumbSpace;
 
-        if (media.isEmpty()) {
-            // Nic do archiwizacji — archiwum jest tylko pobieżnie sprawdzane (najczęstszy przypadek w tle).
-            return new Summary(List.of(), List.of(), List.of(), dateFolders(target).size(), List.copyOf(errors), 0, dayFolder,
-                    Duration.ofNanos(System.nanoTime() - start),
-                    thumbFolder == null ? ThumbnailStats.NONE : new ThumbnailStats(0, 0, 0, thumbFolder), 0, List.of());
+        Run(Progress progress, BooleanSupplier cancelled) {
+            this.progress = progress;
+            this.cancelled = cancelled;
+            this.source = options.source().toAbsolutePath().normalize();
+            this.target = options.target().toAbsolutePath().normalize();
+            String day = today.format(DAY_FORMAT);
+            this.dayFolder = target.resolve(day);
+            this.thumbFolder = options.makeThumbnails()
+                    ? options.thumbnailTarget().toAbsolutePath().normalize().resolve(day) : null;
         }
-        progress.update("Sprawdzanie archiwum…", -1, 1);
-        boolean newArchive = !Files.isDirectory(target);
-        List<Path> folders = openArchive(target);
-        progress.update("Indeksowanie archiwum…", -1, 1);
-        // Niepełny spis = przeoczone duplikaty, więc każdy błąd odczytu archiwum przerywa przebieg
-        // (i spis nie jest zapamiętywany).
-        Supplier<Map<Long, List<Path>>> builder = () -> {
+
+        Summary execute() {
+            progress.update("Wyszukiwanie zdjęć i filmów w folderze archiwizowanym…", -1, 1);
+            List<Path> media = collectSource(source, target, errors, cancelled);
+            if (media.isEmpty()) {
+                // Nic do archiwizacji — archiwum jest tylko pobieżnie sprawdzane (najczęstszy przypadek w tle).
+                return summary(dateFolders(target).size());
+            }
+            progress.update("Sprawdzanie archiwum…", -1, 1);
+            newArchive = !Files.isDirectory(target);
+            List<Path> folders = openArchive(target);
+            progress.update("Indeksowanie archiwum…", -1, 1);
+            index = archiveIndex != null ? archiveIndex.current(folders, () -> buildIndex(folders)) : buildIndex(folders);
+            archiveSpace = new FreeSpace(target, "archiwum", minFreeBytes);
+            thumbSpace = thumbFolder == null ? null : new FreeSpace(thumbFolder, "miniatur", minFreeBytes);
+
+            int total = media.size();
+            for (int i = 0; i < total; i++) {
+                checkCancelled(cancelled);
+                Path file = media.get(i);
+                progress.update("Archiwizacja: " + (i + 1) + " z " + total + "  •  " + file.getFileName(), i, total);
+                try {
+                    archive(file, i, total);
+                } catch (IOException | RuntimeException e) {
+                    failed(file, e);
+                }
+            }
+            progress.update("Gotowe", total, total);
+            return summary(folders.size());
+        }
+
+        /**
+         * Spis archiwum (rozmiar → pliki). Niepełny spis = przeoczone duplikaty, więc każdy błąd odczytu archiwum
+         * przerywa przebieg (i spis nie jest zapamiętywany).
+         */
+        private Map<Long, List<Path>> buildIndex(List<Path> folders) {
             Map<Long, List<Path>> built = new HashMap<>();
             List<String> indexErrors = new ArrayList<>();
             for (Path folder : folders) {
@@ -307,103 +344,105 @@ public class PhoneArchiver {
                         + "). Bez pełnego spisu nie da się wykryć duplikatów.");
             }
             return built;
-        };
-        Map<Long, List<Path>> index = archiveIndex != null ? archiveIndex.current(folders, builder) : builder.get();
+        }
 
-        List<Path> moved = new ArrayList<>();
-        List<Path> copied = new ArrayList<>();
-        List<Path> incomplete = new ArrayList<>();
-        SpaceCheck archiveSpace = new SpaceCheck(target, "archiwum", minFreeBytes);
-        SpaceCheck thumbSpace = thumbFolder == null ? null : new SpaceCheck(thumbFolder, "miniatur", minFreeBytes);
-        List<Duplicate> duplicates = new ArrayList<>();
-        long archivedBytes = 0;
-        int total = media.size();
-        for (int i = 0; i < total; i++) {
-            checkCancelled(cancelled);
-            Path file = media.get(i);
-            progress.update("Archiwizacja: " + (i + 1) + " z " + total + "  •  " + file.getFileName(), i, total);
-            try {
-                FileState state = gate.check(file);
-                if (state == FileState.WAIT) {
-                    waiting++;
-                    continue;
-                }
-                if (state == FileState.IGNORE) {
-                    continue;
-                }
-                // Przestał rosnąć, ale czy jest cały? Przerwane przesyłanie zostawia ucięty plik.
-                if (MediaIntegrity.check(file) == MediaIntegrity.Result.INCOMPLETE) {
-                    waiting++;
-                    incomplete.add(file);
-                    continue;
-                }
-                long size = Files.size(file);
-                Path existing = findInArchive(file, size, index);
-                if (existing != null) {
-                    duplicates.add(new Duplicate(file, existing, size));
-                    continue;
-                }
-                if (!Locations.sameServer(file, target) && !sameStore(file, target)) {
-                    archiveSpace.require(size); // przeniesienie między dyskami — potrzebne miejsce
-                }
-                ensureDayFolder(target, dayFolder, newArchive);
-                Path destination = uniqueName(dayFolder.resolve(file.getFileName().toString()));
-                boolean keepOriginal = ProtectedPaths.isProtected(file);
-                transfer(file, destination, keepOriginal);
-                (keepOriginal ? copied : moved).add(destination);
-                archivedBytes += size;
-                index.computeIfAbsent(size, k -> new ArrayList<>()).add(destination);
-                String hash = hashes.remove(file);
-                if (hash != null) {
-                    hashes.put(destination, hash);
-                }
-                if (thumbFolder != null && isPhoto(destination)) {
-                    if (!ThumbnailGenerator.isJpeg(destination)) {
-                        thumbsUnsupported++;
-                    } else {
-                        Path thumbnail = thumbFolder.resolve(destination.getFileName().toString());
-                        if (Files.exists(thumbnail)) {
-                            thumbsExisting++;
-                        } else {
-                            progress.update("Miniatura: " + (i + 1) + " z " + total + "  •  "
-                                    + destination.getFileName(), i, total);
-                            thumbSpace.require(0);
-                            try {
-                                ThumbnailMaker.make(destination, thumbnail, options.thumbnailSide());
-                                thumbsCreated++;
-                            } catch (IOException | RuntimeException | OutOfMemoryError e) {
-                                // Plik jest już bezpiecznie w archiwum — błąd dotyczy tylko miniatury.
-                                errors.add(destination + ": nie utworzono miniatury — "
-                                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
-                            }
-                        }
-                    }
-                }
-            } catch (IOException | RuntimeException e) {
-                if (e instanceof CancelledException ce) {
-                    throw ce;
-                }
-                if (e instanceof InsufficientSpaceException space) {
-                    int done = moved.size() + copied.size();
-                    throw new InsufficientSpaceException(space.getMessage() + (done > 0
-                            ? " Wcześniej zarchiwizowano " + Texts.count(done, "plik", "pliki", "plików") + "." : ""));
-                }
-                errors.add(file + ": " + message(e));
-                if (!Files.isDirectory(target)) {
-                    // Archiwum zniknęło w trakcie (np. zerwane połączenie) — nie próbujemy kolejnych plików.
-                    int done = moved.size() + copied.size();
-                    throw new ArchiveUnavailableException("Archiwum przestało być dostępne w trakcie archiwizacji: "
-                            + target + (done > 0 ? " (wcześniej zarchiwizowano " + Texts.count(done, "plik", "pliki", "plików")
-                            + ")" : "") + ".");
-                }
+        /** Jeden plik: czy jest gotowy i kompletny, czy już jest w archiwum, przeniesienie, miniatura. */
+        private void archive(Path file, int i, int total) throws IOException {
+            FileState state = gate.check(file);
+            if (state == FileState.WAIT) {
+                waiting++;
+                return;
+            }
+            if (state == FileState.IGNORE) {
+                return;
+            }
+            // Przestał rosnąć, ale czy jest cały? Przerwane przesyłanie zostawia ucięty plik.
+            if (MediaIntegrity.check(file) == MediaIntegrity.Result.INCOMPLETE) {
+                waiting++;
+                incomplete.add(file);
+                return;
+            }
+            long size = Files.size(file);
+            Path existing = findInArchive(file, size, index);
+            if (existing != null) {
+                duplicates.add(new Duplicate(file, existing, size));
+                return;
+            }
+            if (!Locations.sameServer(file, target) && !SafeTransfer.sameStore(file, target)) {
+                archiveSpace.require(size); // przeniesienie między dyskami — potrzebne miejsce
+            }
+            ensureDayFolder(target, dayFolder, newArchive);
+            Path destination = SafeTransfer.uniqueName(dayFolder.resolve(file.getFileName().toString()));
+            boolean keepOriginal = ProtectedPaths.isProtected(file);
+            SafeTransfer.transfer(file, destination, keepOriginal);
+            (keepOriginal ? copied : moved).add(destination);
+            archivedBytes += size;
+            index.computeIfAbsent(size, k -> new ArrayList<>()).add(destination);
+            String hash = hashes.remove(file);
+            if (hash != null) {
+                hashes.put(destination, hash);
+            }
+            if (thumbFolder != null && isPhoto(destination)) {
+                makeThumbnail(destination, i, total);
             }
         }
-        progress.update("Gotowe", total, total);
-        return new Summary(List.copyOf(moved), List.copyOf(copied), List.copyOf(duplicates), folders.size(),
-                List.copyOf(errors), archivedBytes, dayFolder, Duration.ofNanos(System.nanoTime() - start),
-                thumbFolder == null ? ThumbnailStats.NONE
-                        : new ThumbnailStats(thumbsCreated, thumbsExisting, thumbsUnsupported, thumbFolder),
-                waiting, List.copyOf(incomplete));
+
+        /** Miniatura zarchiwizowanego zdjęcia; błąd dotyczy tylko miniatury — zdjęcie jest już w archiwum. */
+        private void makeThumbnail(Path photo, int i, int total) {
+            if (!ThumbnailGenerator.isJpeg(photo)) {
+                thumbsUnsupported++;
+                return;
+            }
+            Path thumbnail = thumbFolder.resolve(photo.getFileName().toString());
+            if (Files.exists(thumbnail)) {
+                thumbsExisting++;
+                return;
+            }
+            progress.update("Miniatura: " + (i + 1) + " z " + total + "  •  " + photo.getFileName(), i, total);
+            thumbSpace.require(0);
+            try {
+                ThumbnailMaker.make(photo, thumbnail, options.thumbnailSide());
+                thumbsCreated++;
+            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                errors.add(photo + ": nie utworzono miniatury — " + Texts.errorMessage(e));
+            }
+        }
+
+        /**
+         * Błąd przy pliku. Przerwanie, brak miejsca i zniknięcie archiwum (np. zerwane połączenie) kończą
+         * przebieg; inne błędy trafiają do listy, a archiwizacja idzie dalej.
+         */
+        private void failed(Path file, Exception e) {
+            if (e instanceof CancelledException cancel) {
+                throw cancel;
+            }
+            if (e instanceof InsufficientSpaceException space) {
+                throw new InsufficientSpaceException(space.getMessage() + (archivedSoFar() > 0
+                        ? " Wcześniej zarchiwizowano " + archivedSoFarText() + "." : ""));
+            }
+            errors.add(file + ": " + Texts.errorMessage(e));
+            if (!Files.isDirectory(target)) {
+                throw new ArchiveUnavailableException("Archiwum przestało być dostępne w trakcie archiwizacji: "
+                        + target + (archivedSoFar() > 0 ? " (wcześniej zarchiwizowano " + archivedSoFarText() + ")" : "")
+                        + ".");
+            }
+        }
+
+        private int archivedSoFar() {
+            return moved.size() + copied.size();
+        }
+
+        private String archivedSoFarText() {
+            return Texts.count(archivedSoFar(), "plik", "pliki", "plików");
+        }
+
+        private Summary summary(int dateFolderCount) {
+            return new Summary(List.copyOf(moved), List.copyOf(copied), List.copyOf(duplicates), dateFolderCount,
+                    List.copyOf(errors), archivedBytes, dayFolder, Duration.ofNanos(System.nanoTime() - start),
+                    thumbFolder == null ? ThumbnailStats.NONE
+                            : new ThumbnailStats(thumbsCreated, thumbsExisting, thumbsUnsupported, thumbFolder),
+                    waiting, List.copyOf(incomplete));
+        }
     }
 
     private List<Path> collectSource(Path source, Path target, List<String> errors, BooleanSupplier cancelled) {
@@ -432,12 +471,12 @@ public class PhoneArchiver {
 
                 @Override
                 public FileVisitResult visitFileFailed(Path file, IOException e) {
-                    errors.add(file + ": " + message(e));
+                    errors.add(file + ": " + Texts.errorMessage(e));
                     return FileVisitResult.CONTINUE;
                 }
             });
         } catch (IOException e) {
-            errors.add(source + ": " + message(e));
+            errors.add(source + ": " + Texts.errorMessage(e));
         }
         Collections.sort(media);
         return media;
@@ -455,7 +494,7 @@ public class PhoneArchiver {
 
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    if (attrs.isRegularFile() && !file.getFileName().toString().endsWith(TMP_SUFFIX)) {
+                    if (attrs.isRegularFile() && !file.getFileName().toString().endsWith(SafeTransfer.TMP_SUFFIX)) {
                         index.computeIfAbsent(attrs.size(), k -> new ArrayList<>()).add(file);
                     }
                     return FileVisitResult.CONTINUE;
@@ -463,12 +502,12 @@ public class PhoneArchiver {
 
                 @Override
                 public FileVisitResult visitFileFailed(Path file, IOException e) {
-                    errors.add(file + ": " + message(e));
+                    errors.add(file + ": " + Texts.errorMessage(e));
                     return FileVisitResult.CONTINUE;
                 }
             });
         } catch (IOException e) {
-            errors.add(folder + ": " + message(e));
+            errors.add(folder + ": " + Texts.errorMessage(e));
         }
     }
 
@@ -493,7 +532,7 @@ public class PhoneArchiver {
                     continue; // usunięty z archiwum od zbudowania spisu
                 }
                 // Nie wiadomo, czy to duplikat — plik zostaje w źródle do następnego przebiegu.
-                throw new IOException("nie udało się odczytać pliku archiwum " + candidate + " (" + message(e)
+                throw new IOException("nie udało się odczytać pliku archiwum " + candidate + " (" + Texts.errorMessage(e)
                         + ") — plik zostaje w folderze archiwizowanym", e);
             }
         }
@@ -507,37 +546,6 @@ public class PhoneArchiver {
             hashes.put(file, hash);
         }
         return hash;
-    }
-
-    /** Przenosi (albo kopiuje) plik tak, by w razie błędu nie zostawić w archiwum niepełnej kopii. */
-    private static void transfer(Path file, Path destination, boolean keepOriginal) throws IOException {
-        // Zwykłe przeniesienie tylko w obrębie jednego dysku. Między dyskami (zwłaszcza sieciowymi) zawsze
-        // kopia do pliku tymczasowego i weryfikacja — po zerwaniu połączenia w archiwum nie zostaje niepełny plik.
-        if (!keepOriginal && (Locations.sameServer(file, destination) || sameStore(file, destination.getParent()))) {
-            try {
-                // Ten sam dysk: zwykła zmiana nazwy, bez kopiowania danych.
-                Files.move(file, destination);
-                return;
-            } catch (IOException e) {
-                if (Files.exists(destination) || !Files.exists(file)) {
-                    throw e;
-                }
-                // Inny dysk lub inny problem — próbujemy bezpiecznie: kopia, weryfikacja, usunięcie.
-            }
-        }
-        Path tmp = destination.resolveSibling(destination.getFileName() + TMP_SUFFIX);
-        try {
-            Files.copy(file, tmp, StandardCopyOption.COPY_ATTRIBUTES, StandardCopyOption.REPLACE_EXISTING);
-            if (Files.size(tmp) != Files.size(file)) {
-                throw new IOException("kopia ma inny rozmiar niż oryginał");
-            }
-            Files.move(tmp, destination);
-        } finally {
-            Files.deleteIfExists(tmp);
-        }
-        if (!keepOriginal) {
-            Files.delete(file);
-        }
     }
 
     /**
@@ -563,178 +571,10 @@ public class PhoneArchiver {
         }
     }
 
-    /** Wolne miejsce na dysku (tylko lokalnym — serwer nie podaje wolnego miejsca). */
-    private static final class SpaceCheck {
-        private final Path folder;
-        private final String what;
-        private final long minFree;
-        private java.nio.file.FileStore store;
-        private boolean unknown;
-
-        SpaceCheck(Path folder, String what, long minFree) {
-            this.folder = folder;
-            this.what = what;
-            this.minFree = minFree;
-        }
-
-        void require(long bytes) {
-            if (unknown || Locations.isRemote(folder)) {
-                return;
-            }
-            try {
-                if (store == null) {
-                    Path existing = folder;
-                    while (existing != null && !Files.exists(existing)) {
-                        existing = existing.getParent();
-                    }
-                    if (existing == null) {
-                        unknown = true;
-                        return;
-                    }
-                    store = Files.getFileStore(existing);
-                }
-                long free = store.getUsableSpace();
-                if (free - bytes < minFree) {
-                    throw new InsufficientSpaceException("Za mało miejsca na dysku " + what + " (" + folder.getRoot()
-                            + "): wolne " + Texts.formatBytes(free) + ", potrzeba " + Texts.formatBytes(bytes)
-                            + " i zapasu " + Texts.formatBytes(minFree) + ". Zwolnij miejsce — archiwizacja "
-                            + "wznowi się sama, pliki zostały w folderze archiwizowanym.");
-                }
-            } catch (IOException e) {
-                unknown = true; // nie da się sprawdzić — nie blokujemy
-            }
-        }
-    }
-
-    private static boolean sameStore(Path file, Path folder) {
-        if (Locations.isRemote(file) || Locations.isRemote(folder)) {
-            return false; // różne połączenia albo serwer i dysk lokalny
-        }
-        try {
-            // Folder docelowy może jeszcze nie istnieć (nowy folder z datą, nowe archiwum) — liczy się dysk,
-            // na którym powstanie, czyli dysk najbliższego istniejącego folderu nadrzędnego.
-            Path existing = folder.toAbsolutePath();
-            while (existing != null && !Files.exists(existing)) {
-                existing = existing.getParent();
-            }
-            return existing != null && Files.getFileStore(file).equals(Files.getFileStore(existing));
-        } catch (IOException | RuntimeException e) {
-            return false;
-        }
-    }
-
-    /** {@code IMG.jpg}, a gdy zajęte (inna zawartość): {@code IMG (1).jpg}, {@code IMG (2).jpg}… */
-    static Path uniqueName(Path path) {
-        if (!Files.exists(path)) {
-            return path;
-        }
-        String name = path.getFileName().toString();
-        int dot = name.lastIndexOf('.');
-        String base = dot <= 0 ? name : name.substring(0, dot);
-        String ext = dot <= 0 ? "" : name.substring(dot);
-        for (int i = 1; ; i++) {
-            Path candidate = path.resolveSibling(base + " (" + i + ")" + ext);
-            if (!Files.exists(candidate)) {
-                return candidate;
-            }
-        }
-    }
-
-    // =====================================================================
-    // Usuwanie duplikatów ze źródła
-    // =====================================================================
-
-    /**
-     * Usuwa ze źródła pliki, które już są w archiwum. Przed usunięciem sprawdza, czy kopia w archiwum
-     * nadal istnieje i ma ten sam rozmiar. Plik z chronionego folderu ({@code __…}) jest usuwany tylko
-     * wtedy, gdy kopia z archiwum leży w tym samym chronionym folderze.
-     *
-     * @param toTrash do kosza systemowego zamiast trwałego usunięcia
-     */
-    public static RemovalOutcome removeFromSource(List<Duplicate> duplicates, boolean toTrash) {
-        return processDuplicates(duplicates, file -> {
-            if (toTrash && !Locations.isRemote(file)) { // serwer nie ma kosza — tam usuwamy trwale
-                if (!Desktop.getDesktop().moveToTrash(file.toFile())) {
-                    throw new IOException("nie udało się przenieść do kosza");
-                }
-            } else {
-                Files.delete(file);
-            }
-        });
-    }
-
-    /**
-     * Przenosi ze źródła pliki, które już są w archiwum, do wskazanego folderu z zachowaniem struktury
-     * podfolderów względem folderu archiwizowanego. Gdy plik o tej nazwie już tam jest, dostaje sufiks
-     * {@code (1)}, {@code (2)}… Zabezpieczenia jak w {@link #removeFromSource}.
-     *
-     * @param source folder archiwizowany (do odtworzenia struktury podfolderów)
-     * @param folder folder na duplikaty
-     */
-    public static RemovalOutcome moveDuplicates(List<Duplicate> duplicates, Path source, Path folder) {
-        Path root = source.toAbsolutePath().normalize();
-        Path destinationRoot = folder.toAbsolutePath().normalize();
-        return processDuplicates(duplicates, file -> {
-            Path absolute = file.toAbsolutePath().normalize();
-            Path relative = absolute.startsWith(root) ? root.relativize(absolute) : absolute.getFileName();
-            Path destination = uniqueName(destinationRoot.resolve(relative.toString()));
-            Files.createDirectories(destination.getParent());
-            transfer(file, destination, false);
-        });
-    }
-
-    private interface FileOperation {
-        void apply(Path file) throws IOException;
-    }
-
-    /**
-     * Wspólne zabezpieczenia: kopia w archiwum musi nadal istnieć i mieć ten sam rozmiar, a plik z chronionego
-     * folderu ({@code __…}) jest ruszany tylko wtedy, gdy kopia z archiwum leży w tym samym chronionym folderze.
-     */
-    private static RemovalOutcome processDuplicates(List<Duplicate> duplicates, FileOperation operation) {
-        List<Path> processed = new ArrayList<>();
-        List<String> errors = new ArrayList<>();
-        int skippedProtected = 0;
-        for (Duplicate duplicate : duplicates) {
-            Path file = duplicate.source();
-            try {
-                Path existing = duplicate.existing().toAbsolutePath().normalize();
-                boolean protectedCopyKept = ProtectedPaths.protectedDirs(file).stream().allMatch(existing::startsWith);
-                if (!protectedCopyKept) {
-                    skippedProtected++;
-                    continue;
-                }
-                if (!Files.isRegularFile(file)) {
-                    continue; // usunięty w międzyczasie
-                }
-                if (!Files.isRegularFile(existing) || Files.size(existing) != Files.size(file)) {
-                    throw new IOException("kopia w archiwum zniknęła lub się zmieniła (" + existing + ")");
-                }
-                operation.apply(file);
-                processed.add(file);
-            } catch (IOException | RuntimeException e) {
-                errors.add(file + ": " + message(e));
-            }
-        }
-        return new RemovalOutcome(List.copyOf(processed), skippedProtected, List.copyOf(errors));
-    }
-
-    /** Czy system pozwala przenosić pliki do kosza. */
-    public static boolean trashSupported() {
-        try {
-            return Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH);
-        } catch (RuntimeException e) {
-            return false;
-        }
-    }
-
     private static void checkCancelled(BooleanSupplier cancelled) {
         if (cancelled.getAsBoolean()) {
             throw new CancelledException();
         }
     }
 
-    private static String message(Exception e) {
-        return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-    }
 }

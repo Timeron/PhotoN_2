@@ -1,5 +1,7 @@
 package com.photon.remote;
 
+import java.util.Objects;
+
 /**
  * Połączenie z serwerem zdalnym, zdefiniowane raz dla całej aplikacji. W zakładkach wskazuje się je
  * tylko nazwą: {@code [Nazwa]/folder/na/serwerze}.
@@ -44,7 +46,7 @@ public record RemoteServer(String name, RemoteProtocol protocol, String host, in
         return other != null && protocol == other.protocol && host.equals(other.host)
                 && effectivePort() == other.effectivePort() && user.equals(other.user)
                 && password.equals(other.password) && passive == other.passive
-                && java.util.Objects.equals(hostKey, other.hostKey);
+                && Objects.equals(hostKey, other.hostKey);
     }
 
     /** Błąd w konfiguracji albo null. */

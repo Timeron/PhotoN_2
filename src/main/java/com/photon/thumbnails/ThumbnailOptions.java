@@ -1,6 +1,7 @@
 package com.photon.thumbnails;
 
 import java.nio.file.Path;
+import java.nio.file.Files;
 
 /**
  * Konfiguracja tworzenia miniatur (zapamiętywana między uruchomieniami).
@@ -26,7 +27,7 @@ public record ThumbnailOptions(Path source, Path target, int maxSide, boolean in
         if (source == null) {
             return "Wybierz folder ze zdjęciami.";
         }
-        if (!java.nio.file.Files.isDirectory(source)) {
+        if (!Files.isDirectory(source)) {
             return "Folder ze zdjęciami nie istnieje: " + source;
         }
         if (target == null) {

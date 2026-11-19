@@ -21,6 +21,7 @@ import javafx.stage.StageStyle;
 
 import java.io.IOException;
 import java.util.Objects;
+import com.photon.remote.RemoteFileSystemProvider;
 
 public class PhotonApp extends Application {
 
@@ -33,7 +34,7 @@ public class PhotonApp extends Application {
     @Override
     public void stop() {
         // Zamyka połączenia z serwerami zdalnymi (logout), zamiast zostawiać je do rozłączenia przez serwer.
-        com.photon.remote.RemoteFileSystemProvider.instance().closeAll();
+        RemoteFileSystemProvider.instance().closeAll();
     }
 
     @Override
