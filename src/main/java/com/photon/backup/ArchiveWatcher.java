@@ -96,6 +96,11 @@ public class ArchiveWatcher {
     private final Map<Path, PhoneArchiver.Duplicate> pending = new LinkedHashMap<>();
     private final Object pendingLock = new Object();
     private volatile int pendingCount;
+    /**
+     * Czy archiwum miało już foldery z datą. Jeśli tak, a nagle nie widać żadnego, archiwum jest uznawane
+     * za niedostępne (np. odłączony dysk sieciowy), a nie za puste — inaczej wszystko trafiłoby do niego ponownie.
+     */
+    private volatile boolean seenDateFolders;
 
     /**
      * @param cache       pamięć podręczna sum plików archiwum (null = bez pamięci)
@@ -138,10 +143,20 @@ public class ArchiveWatcher {
             summary = new PhoneArchiver(options, LocalDate.ofInstant(at, clock.getZone()), cache)
                     .withGate(gate)
                     .withIndex(index)
+                    .expectingDateFolders(seenDateFolders)
                     .run((message, done, total) -> { }, cancelled);
+        } catch (PhoneArchiver.ArchiveUnavailableException e) {
+            // Archiwum (np. dysk sieciowy) niedostępne — pliki zostają w źródle, spis zostanie zbudowany od nowa.
+            index.invalidate();
+            saveCache();
+            return new CycleReport(at, null, null, List.of(),
+                    e.getMessage() + " Pliki zostały w folderze archiwizowanym.", 0);
         } finally {
             changed = gate.changesThisCycle();
             gate.endCycle();
+        }
+        if (summary.dateFolders() > 0) {
+            seenDateFolders = true;
         }
 
         PhoneArchiver.RemovalOutcome moved = null;
@@ -161,7 +176,11 @@ public class ArchiveWatcher {
             }
         }
         pendingDuplicates();
+        saveCache();
+        return new CycleReport(at, summary, moved, List.copyOf(fresh), null, changed);
+    }
 
+    private void saveCache() {
         if (cache != null) {
             try {
                 cache.save();
@@ -169,7 +188,6 @@ public class ArchiveWatcher {
                 System.err.println("Nie udało się zapisać pamięci podręcznej: " + e.getMessage());
             }
         }
-        return new CycleReport(at, summary, moved, List.copyOf(fresh), null, changed);
     }
 
     /** Duplikaty czekające na decyzję o usunięciu z folderu źródłowego. */

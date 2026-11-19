@@ -7,10 +7,13 @@ import com.photon.duplicates.scan.ProtectedPaths;
 import com.photon.duplicates.scan.ScannedFile;
 import com.photon.thumbnails.ThumbnailGenerator;
 import com.photon.thumbnails.ThumbnailMaker;
+import com.photon.ui.Texts;
 
 import java.awt.Desktop;
 import java.io.IOException;
+import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -48,6 +51,16 @@ public class PhoneArchiver {
     public static class CancelledException extends RuntimeException {
         public CancelledException() {
             super("Archiwizacja została przerwana");
+        }
+    }
+
+    /**
+     * Archiwum (np. dysk sieciowy) jest niedostępne albo nie dało się go w całości odczytać. Przebieg jest
+     * przerywany, zanim cokolwiek zostanie przeniesione bez sprawdzenia duplikatów — pliki zostają w źródle.
+     */
+    public static class ArchiveUnavailableException extends RuntimeException {
+        public ArchiveUnavailableException(String message) {
+            super(message);
         }
     }
 
@@ -113,6 +126,7 @@ public class PhoneArchiver {
     private final Map<Path, String> hashes = new HashMap<>();
     private FileGate gate = file -> FileState.READY;
     private ArchiveIndex archiveIndex;
+    private boolean expectDateFolders;
 
     /** @param cache pamięć podręczna sum plików archiwum (null = bez pamięci) */
     public PhoneArchiver(PhoneArchiveOptions options, LocalDate today, HashCache cache) {
@@ -124,6 +138,15 @@ public class PhoneArchiver {
     /** Spis archiwum pamiętany między przebiegami (domyślnie budowany za każdym razem). */
     public PhoneArchiver withIndex(ArchiveIndex index) {
         this.archiveIndex = index;
+        return this;
+    }
+
+    /**
+     * Archiwum miało foldery {@code RRRR-MM-DD}: jeśli teraz nie widać żadnego (albo samego archiwum),
+     * uznajemy je za niedostępne (np. odłączony dysk sieciowy), a nie za puste lub nowe.
+     */
+    public PhoneArchiver expectingDateFolders(boolean expect) {
+        this.expectDateFolders = expect;
         return this;
     }
 
@@ -152,20 +175,61 @@ public class PhoneArchiver {
 
     /** Bezpośrednie podfoldery archiwum nazwane datą (pusta lista, gdy folder nie istnieje). */
     public static List<Path> dateFolders(Path target) {
-        List<Path> folders = new ArrayList<>();
         if (target == null || !Files.isDirectory(target)) {
-            return folders;
+            return new ArrayList<>();
         }
+        try {
+            return listDateFolders(target);
+        } catch (IOException e) {
+            return new ArrayList<>();
+        }
+    }
+
+    /** Jak {@link #dateFolders}, ale błąd odczytu jest zgłaszany, a nie zamieniany na pustą listę. */
+    static List<Path> listDateFolders(Path target) throws IOException {
+        List<Path> folders = new ArrayList<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(target)) {
             for (Path child : stream) {
-                if (Files.isDirectory(child) && isDateFolderName(child.getFileName().toString())) {
+                if (isDateFolderName(child.getFileName().toString()) && Files.isDirectory(child)) {
                     folders.add(child);
                 }
             }
-        } catch (IOException e) {
-            return folders;
+        } catch (DirectoryIteratorException e) {
+            throw e.getCause();
         }
         Collections.sort(folders);
+        return folders;
+    }
+
+    /**
+     * Sprawdza, czy archiwum jest dostępne, i zwraca jego foldery z datą.
+     *
+     * @throws ArchiveUnavailableException gdy archiwum nie istnieje (a nie można go utworzyć), nie daje się
+     *                                     odczytać albo nagle nie ma w nim folderów z datą
+     */
+    private List<Path> openArchive(Path target) {
+        if (!Files.isDirectory(target)) {
+            Path parent = target.getParent();
+            if (expectDateFolders) {
+                throw new ArchiveUnavailableException("Folder archiwum jest niedostępny: " + target
+                        + " (wcześniej istniał — czy dysk jest podłączony?).");
+            }
+            if (parent == null || !Files.isDirectory(parent)) {
+                throw new ArchiveUnavailableException("Folder archiwum jest niedostępny: " + target
+                        + " (nie istnieje ani on, ani folder nadrzędny — czy dysk jest podłączony?).");
+            }
+            return List.of(); // nowe archiwum — powstanie przy pierwszym przeniesionym pliku
+        }
+        List<Path> folders;
+        try {
+            folders = listDateFolders(target);
+        } catch (IOException e) {
+            throw new ArchiveUnavailableException("Nie udało się odczytać folderu archiwum " + target + ": " + message(e));
+        }
+        if (folders.isEmpty() && expectDateFolders) {
+            throw new ArchiveUnavailableException("W archiwum " + target + " nie widać żadnego folderu z datą, "
+                    + "choć wcześniej były — dysk może być niedostępny.");
+        }
         return folders;
     }
 
@@ -199,18 +263,28 @@ public class PhoneArchiver {
         progress.update("Wyszukiwanie zdjęć i filmów w folderze archiwizowanym…", -1, 1);
         List<Path> media = collectSource(source, target, errors, cancelled);
 
-        List<Path> folders = dateFolders(target);
         if (media.isEmpty()) {
-            // Nic do archiwizacji — archiwum nie jest w ogóle czytane (najczęstszy przypadek w tle).
-            return new Summary(List.of(), List.of(), List.of(), folders.size(), List.copyOf(errors), 0, dayFolder,
+            // Nic do archiwizacji — archiwum jest tylko pobieżnie sprawdzane (najczęstszy przypadek w tle).
+            return new Summary(List.of(), List.of(), List.of(), dateFolders(target).size(), List.copyOf(errors), 0, dayFolder,
                     Duration.ofNanos(System.nanoTime() - start),
                     thumbFolder == null ? ThumbnailStats.NONE : new ThumbnailStats(0, 0, 0, thumbFolder), 0);
         }
+        progress.update("Sprawdzanie archiwum…", -1, 1);
+        boolean newArchive = !Files.isDirectory(target);
+        List<Path> folders = openArchive(target);
         progress.update("Indeksowanie archiwum…", -1, 1);
+        // Niepełny spis = przeoczone duplikaty, więc każdy błąd odczytu archiwum przerywa przebieg
+        // (i spis nie jest zapamiętywany).
         Supplier<Map<Long, List<Path>>> builder = () -> {
             Map<Long, List<Path>> built = new HashMap<>();
+            List<String> indexErrors = new ArrayList<>();
             for (Path folder : folders) {
-                indexFolder(folder, built, errors, cancelled);
+                indexFolder(folder, built, indexErrors, cancelled);
+            }
+            if (!indexErrors.isEmpty()) {
+                throw new ArchiveUnavailableException("Nie udało się odczytać całego archiwum ("
+                        + Texts.count(indexErrors.size(), "błąd", "błędy", "błędów") + ", np. " + indexErrors.get(0)
+                        + "). Bez pełnego spisu nie da się wykryć duplikatów.");
             }
             return built;
         };
@@ -240,7 +314,7 @@ public class PhoneArchiver {
                     duplicates.add(new Duplicate(file, existing, size));
                     continue;
                 }
-                Files.createDirectories(dayFolder);
+                ensureDayFolder(target, dayFolder, newArchive);
                 Path destination = uniqueName(dayFolder.resolve(file.getFileName().toString()));
                 boolean keepOriginal = ProtectedPaths.isProtected(file);
                 transfer(file, destination, keepOriginal);
@@ -277,6 +351,13 @@ public class PhoneArchiver {
                     throw ce;
                 }
                 errors.add(file + ": " + message(e));
+                if (!Files.isDirectory(target)) {
+                    // Archiwum zniknęło w trakcie (np. zerwane połączenie) — nie próbujemy kolejnych plików.
+                    int done = moved.size() + copied.size();
+                    throw new ArchiveUnavailableException("Archiwum przestało być dostępne w trakcie archiwizacji: "
+                            + target + (done > 0 ? " (wcześniej zarchiwizowano " + Texts.count(done, "plik", "pliki", "plików")
+                            + ")" : "") + ".");
+                }
             }
         }
         progress.update("Gotowe", total, total);
@@ -370,7 +451,12 @@ public class PhoneArchiver {
                     return candidate;
                 }
             } catch (IOException e) {
-                // Nieczytelny plik archiwum nie jest duplikatem — sprawdzamy kolejne.
+                if (!Files.exists(candidate) && Files.isDirectory(options.target())) {
+                    continue; // usunięty z archiwum od zbudowania spisu
+                }
+                // Nie wiadomo, czy to duplikat — plik zostaje w źródle do następnego przebiegu.
+                throw new IOException("nie udało się odczytać pliku archiwum " + candidate + " (" + message(e)
+                        + ") — plik zostaje w folderze archiwizowanym", e);
             }
         }
         return null;
@@ -387,7 +473,9 @@ public class PhoneArchiver {
 
     /** Przenosi (albo kopiuje) plik tak, by w razie błędu nie zostawić w archiwum niepełnej kopii. */
     private static void transfer(Path file, Path destination, boolean keepOriginal) throws IOException {
-        if (!keepOriginal) {
+        // Zwykłe przeniesienie tylko w obrębie jednego dysku. Między dyskami (zwłaszcza sieciowymi) zawsze
+        // kopia do pliku tymczasowego i weryfikacja — po zerwaniu połączenia w archiwum nie zostaje niepełny plik.
+        if (!keepOriginal && sameStore(file, destination.getParent())) {
             try {
                 // Ten sam dysk: zwykła zmiana nazwy, bez kopiowania danych.
                 Files.move(file, destination);
@@ -411,6 +499,37 @@ public class PhoneArchiver {
         }
         if (!keepOriginal) {
             Files.delete(file);
+        }
+    }
+
+    /**
+     * Tworzy folder z dzisiejszą datą. Sam folder archiwum jest tworzony tylko wtedy, gdy na starcie był nowy —
+     * jeśli zniknął w trakcie (np. zerwane połączenie z dyskiem), nie odtwarzamy go w innym miejscu.
+     */
+    private static void ensureDayFolder(Path target, Path dayFolder, boolean newArchive) throws IOException {
+        if (Files.isDirectory(dayFolder)) {
+            return;
+        }
+        if (!Files.isDirectory(target)) {
+            if (!newArchive) {
+                throw new IOException("folder archiwum " + target + " jest niedostępny");
+            }
+            Files.createDirectories(target);
+        }
+        try {
+            Files.createDirectory(dayFolder);
+        } catch (FileAlreadyExistsException e) {
+            if (!Files.isDirectory(dayFolder)) {
+                throw e;
+            }
+        }
+    }
+
+    private static boolean sameStore(Path file, Path folder) {
+        try {
+            return Files.getFileStore(file).equals(Files.getFileStore(folder));
+        } catch (IOException | RuntimeException e) {
+            return false;
         }
     }
 

@@ -215,11 +215,12 @@ public class AgentLoop {
         if (report.problem() != null) {
             if (!report.problem().equals(lastProblem)) {
                 log(describe(report)); // ten sam problem nie jest powtarzany co 15 s
+                notifyProblem(report.problem());
             }
             lastProblem = report.problem();
         } else {
             if (lastProblem != null) {
-                log("Folder znowu dostępny — sprawdzanie wznowione.");
+                log("Foldery znowu dostępne — archiwizacja wznowiona.");
             }
             lastProblem = null;
             if (report.eventful()) {
@@ -454,6 +455,19 @@ public class AgentLoop {
         }
         try {
             current.notify("PhotoN — kopia zapasowa", String.join("\n", parts), !report.errors().isEmpty());
+        } catch (RuntimeException e) {
+            System.err.println("Błąd powiadomienia: " + e.getMessage());
+        }
+    }
+
+    /** Ostrzeżenie o nowym problemie (np. niedostępny dysk) — raz, nie co każde sprawdzenie. */
+    private void notifyProblem(String problem) {
+        Observer current = observer;
+        if (current == null) {
+            return;
+        }
+        try {
+            current.notify("PhotoN — kopia zapasowa wstrzymana", problem, true);
         } catch (RuntimeException e) {
             System.err.println("Błąd powiadomienia: " + e.getMessage());
         }

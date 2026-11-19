@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PhoneArchiverTest {
@@ -362,6 +363,76 @@ class PhoneArchiverTest {
         assertEquals(2, index.rebuilds(), "spis z pamięci");
         assertEquals(1, summary.duplicates().size());
         assertEquals(archive.resolve("2026-11-18/IMG_2.jpg"), summary.duplicates().get(0).existing());
+    }
+
+    @Test
+    void unreachableArchiveStopsBeforeMovingAnything() throws IOException {
+        Path phone = dir.resolve("Telefon");
+        write(phone.resolve("IMG_1.jpg"), "1");
+        // Jak odłączony dysk sieciowy: nie ma ani archiwum, ani folderu nad nim.
+        Path archive = dir.resolve("OdlaczonyDysk").resolve("Archiwum");
+
+        PhoneArchiver.ArchiveUnavailableException error = assertThrows(PhoneArchiver.ArchiveUnavailableException.class,
+                () -> run(phone, archive, true));
+        assertTrue(error.getMessage().contains("niedostępny"), error.getMessage());
+        assertTrue(Files.exists(phone.resolve("IMG_1.jpg")), "plik zostaje w źródle");
+        assertFalse(Files.exists(dir.resolve("OdlaczonyDysk")), "archiwum nie jest tworzone w innym miejscu");
+    }
+
+    @Test
+    void newArchiveIsCreatedWhenItsParentExists() throws IOException {
+        Path phone = dir.resolve("Telefon");
+        write(phone.resolve("IMG_1.jpg"), "1");
+        PhoneArchiver.Summary summary = run(phone, dir.resolve("NoweArchiwum"), true);
+        assertEquals(1, summary.moved().size());
+        assertTrue(Files.exists(dir.resolve("NoweArchiwum/2026-11-18/IMG_1.jpg")));
+    }
+
+    @Test
+    void archiveThatHadDateFoldersButShowsNoneIsTreatedAsUnavailable() throws IOException {
+        Path phone = dir.resolve("Telefon");
+        Path archive = dir.resolve("Archiwum");
+        write(phone.resolve("IMG_1.jpg"), "1");
+        Files.createDirectories(archive); // np. pusty punkt montowania odłączonego dysku
+        PhoneArchiveOptions options = new PhoneArchiveOptions(phone, archive, true);
+
+        assertThrows(PhoneArchiver.ArchiveUnavailableException.class, () -> new PhoneArchiver(options, TODAY, null)
+                .expectingDateFolders(true).run((m, d, t) -> { }, () -> false));
+        assertTrue(Files.exists(phone.resolve("IMG_1.jpg")));
+        assertFalse(Files.exists(archive.resolve("2026-11-18")));
+
+        Files.delete(archive);
+        assertThrows(PhoneArchiver.ArchiveUnavailableException.class, () -> new PhoneArchiver(options, TODAY, null)
+                .expectingDateFolders(true).run((m, d, t) -> { }, () -> false), "archiwum, które istniało, zniknęło");
+        assertFalse(Files.exists(archive), "nie jest odtwarzane");
+    }
+
+    @Test
+    void archiveDisappearingMidRunStopsTheRun() throws IOException {
+        Path phone = dir.resolve("Telefon");
+        Path archive = dir.resolve("Archiwum");
+        Files.createDirectories(archive.resolve("2020-01-01"));
+        write(phone.resolve("IMG_1.jpg"), "1");
+        write(phone.resolve("IMG_2.jpg"), "2");
+        write(phone.resolve("IMG_3.jpg"), "3");
+        Path disconnected = dir.resolve("Archiwum-odlaczone");
+        int[] checked = {0};
+        PhoneArchiver archiver = new PhoneArchiver(new PhoneArchiveOptions(phone, archive, true), TODAY, null)
+                .withGate(file -> {
+                    if (++checked[0] == 2) {
+                        Files.move(archive, disconnected); // połączenie zerwane po pierwszym pliku
+                    }
+                    return PhoneArchiver.FileState.READY;
+                });
+
+        PhoneArchiver.ArchiveUnavailableException error = assertThrows(PhoneArchiver.ArchiveUnavailableException.class,
+                () -> archiver.run((m, d, t) -> { }, () -> false));
+        assertTrue(error.getMessage().contains("w trakcie"), error.getMessage());
+        assertEquals(2, checked[0], "kolejne pliki nie są już próbowane");
+        assertTrue(Files.exists(disconnected.resolve("2026-11-18/IMG_1.jpg")), "pierwszy plik bezpiecznie w archiwum");
+        assertTrue(Files.exists(phone.resolve("IMG_2.jpg")));
+        assertTrue(Files.exists(phone.resolve("IMG_3.jpg")));
+        assertFalse(Files.exists(archive), "archiwum nie zostało odtworzone");
     }
 
     private static PhoneArchiver.Summary run(Path phone, Path archive, boolean subfolders) {

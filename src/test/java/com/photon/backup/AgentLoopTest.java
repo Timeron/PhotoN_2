@@ -155,7 +155,7 @@ class AgentLoopTest {
 
         Files.createDirectories(upload);
         waitFor(() -> control.readStatus().map(s -> s.lastProblem() == null).orElse(false));
-        assertTrue(control.logTail(100).stream().anyMatch(l -> l.contains("znowu dostępny")));
+        assertTrue(control.logTail(100).stream().anyMatch(l -> l.contains("znowu dostępne")));
     }
 
     private void start(PhoneArchiveOptions options, AgentFiles files, Duration fast) {

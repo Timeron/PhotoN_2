@@ -193,6 +193,36 @@ class ArchiveWatcherTest {
         assertEquals(1, watcher.runCycle(() -> false).archived());
     }
 
+    @Test
+    void unavailableArchiveSkipsCycleAndResumesLater() throws IOException {
+        Path phone = dir.resolve("Telefon");
+        Path archive = dir.resolve("Archiwum");
+        Files.createDirectories(archive.resolve("2020-01-01"));
+        write(phone.resolve("IMG_1.jpg"), "1");
+        ArchiveWatcher watcher = new ArchiveWatcher("Test", new PhoneArchiveOptions(phone, archive, true), null,
+                Duration.ZERO, clock);
+        assertEquals(1, watcher.runCycle(() -> false).archived());
+
+        // Dysk sieciowy odłączony; w miejscu archiwum pusty folder (np. punkt montowania).
+        Path disconnected = dir.resolve("Archiwum-odlaczone");
+        Files.move(archive, disconnected);
+        Files.createDirectories(archive);
+        write(phone.resolve("IMG_2.jpg"), "2");
+        ArchiveWatcher.CycleReport skipped = watcher.runCycle(() -> false);
+        assertNotNull(skipped.problem());
+        assertTrue(skipped.problem().contains("Pliki zostały w folderze archiwizowanym"), skipped.problem());
+        assertTrue(Files.exists(phone.resolve("IMG_2.jpg")));
+        assertFalse(Files.exists(archive.resolve("2026-11-18")), "nic nie trafiło do pustego archiwum");
+
+        // Dysk wrócił.
+        Files.delete(archive);
+        Files.move(disconnected, archive);
+        ArchiveWatcher.CycleReport resumed = watcher.runCycle(() -> false);
+        assertNull(resumed.problem());
+        assertEquals(1, resumed.archived());
+        assertTrue(Files.exists(archive.resolve("2026-11-18/IMG_2.jpg")));
+    }
+
     private ArchiveWatcher watcher(Path phone, Path archive, PhoneDuplicateAction action, Path dups) {
         PhoneArchiveOptions options = new PhoneArchiveOptions(phone, archive, true, false, 800, null, action, dups);
         return new ArchiveWatcher("Test", options, null, QUIET, clock);

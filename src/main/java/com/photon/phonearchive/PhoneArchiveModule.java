@@ -66,7 +66,8 @@ public class PhoneArchiveModule extends StackPane {
         if (isRunning()) {
             return;
         }
-        if (!form.hasDateFolders()) {
+        boolean hadDateFolders = form.hasDateFolders();
+        if (!hadDateFolders) {
             boolean proceed = Dialogs.confirm(window(), "Brak folderów z datą w archiwum",
                     "W folderze archiwum nie ma żadnego folderu o nazwie w formacie RRRR-MM-DD (np. 2016-02-23), "
                             + "więc nie da się sprawdzić, czy zdjęcia i filmy były już archiwizowane. "
@@ -91,7 +92,9 @@ public class PhoneArchiveModule extends StackPane {
             protected PhoneArchiver.Summary call() {
                 HashCache cache = HashCache.inCacheDir(cacheDir).load();
                 try {
-                    return new PhoneArchiver(options, day, cache).run((message, done, total) -> {
+                    return new PhoneArchiver(options, day, cache)
+                            .expectingDateFolders(hadDateFolders)
+                            .run((message, done, total) -> {
                         updateMessage(message);
                         if (total > 0 && done >= 0) {
                             updateProgress(done, total);
@@ -120,6 +123,11 @@ public class PhoneArchiveModule extends StackPane {
             Throwable error = task.getException();
             if (error instanceof PhoneArchiver.CancelledException) {
                 form.showStatus("Archiwizacja została przerwana. Przeniesione pliki pozostały w archiwum.", false);
+            } else if (error instanceof PhoneArchiver.ArchiveUnavailableException) {
+                form.showStatus("Archiwizacja przerwana — archiwum jest niedostępne.", true);
+                Dialogs.error(window(), "Archiwum niedostępne", error.getMessage()
+                        + "\n\nPliki, których nie zarchiwizowano, zostały w folderze archiwizowanym. "
+                        + "Sprawdź połączenie z dyskiem i uruchom archiwizację ponownie.");
             } else {
                 form.showStatus("Archiwizacja nie powiodła się.", true);
                 Dialogs.error(window(), "Błąd", error == null ? "Nieznany błąd" : String.valueOf(error.getMessage()));

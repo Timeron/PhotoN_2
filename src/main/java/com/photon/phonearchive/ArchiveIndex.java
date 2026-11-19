@@ -18,7 +18,8 @@ import java.util.function.Supplier;
  *   <li>minęło {@code maxAge} od ostatniej budowy (zmiany w archiwum zrobione poza agentem).</li>
  * </ul>
  * Pliki przenoszone przez archiwizację są dopisywane na bieżąco. Pliki usunięte z archiwum
- * w międzyczasie nie szkodzą — przy porównywaniu nieczytelne pliki są pomijane.
+ * w międzyczasie nie szkodzą — przy porównywaniu nieistniejące pliki są pomijane. Gdy budowa spisu się nie uda
+ * (np. niedostępny dysk sieciowy), nic nie jest zapamiętywane i spis zostanie zbudowany przy następnym przebiegu.
  */
 public class ArchiveIndex {
 

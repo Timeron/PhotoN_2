@@ -151,6 +151,28 @@ Aby przenieść je na inny komputer:
 **Foldery i dyski**
 - Telefon podłączony kablem jako „urządzenie” (bez litery dysku, MTP) **nie jest zwykłym folderem** — aplikacja
   go nie zobaczy. Zdjęcia trzeba najpierw skopiować na dysk albo synchronizować programem do wskazanego folderu.
+- **Dyski sieciowe** (NAS, `Z:`, `\\serwer\udział`) są obsługiwane, z zabezpieczeniami na wypadek ich
+  niedostępności:
+  - Gdy archiwum jest niedostępne, nie daje się go w całości odczytać albo nagle nie widać w nim folderów
+    z datą (choć wcześniej były), archiwizacja **nic nie przenosi** — pliki zostają w folderze archiwizowanym.
+    Bez pełnego spisu archiwum nie da się wykryć duplikatów, więc lepiej poczekać, niż zarchiwizować coś
+    drugi raz. Agent pomija wtedy sprawdzenie, pokazuje ostrzeżenie (dziennik, ikona w zasobniku) i sam wraca
+    do pracy, gdy dysk znów jest dostępny. Ręczna archiwizacja kończy się komunikatem „Archiwum niedostępne”.
+  - Gdy połączenie zerwie się w trakcie, archiwizacja zatrzymuje się po bieżącym pliku. Pliki zarchiwizowane
+    wcześniej są już bezpiecznie w archiwum, a reszta zostaje w źródle.
+  - Między różnymi dyskami pliki są zawsze kopiowane do pliku tymczasowego `.photon-tmp`, sprawdzane i dopiero
+    wtedy oryginał jest usuwany — po zerwaniu połączenia w archiwum nie zostaje niepełny plik.
+  - Folder archiwum jest tworzony tylko wtedy, gdy istnieje folder nad nim (np. sam dysk) — przy odłączonym
+    dysku nie powstanie „zastępcze” archiwum w innym miejscu.
+  - Nieczytelny folder w archiwum (np. brak uprawnień) również wstrzymuje archiwizację — komunikat wskazuje
+    który; trzeba to naprawić. Gdy nie da się odczytać pojedynczego pliku archiwum przy porównywaniu, tylko
+    pliki źródłowe, które mogłyby być jego duplikatem, zostają w źródle (z błędem w podsumowaniu).
+  - Agent sprawdza archiwum tylko wtedy, gdy jest coś do zarchiwizowania; po powrocie dysku wznawia pracę przy
+    najbliższym sprawdzeniu (do 15 minut w trybie wolnym albo od razu po pojawieniu się nowego pliku).
+  - Litery dysków sieciowych (`Z:`) są przypisane do zalogowanego użytkownika. Dla pewności lepiej wskazywać
+    ścieżki `\\serwer\udział\…`.
+  - Nieosiągalny dysk sieciowy potrafi blokować operacje na plikach przez kilkadziesiąt sekund — w tym czasie
+    okno PhotoN (np. przy wpisywaniu ścieżki) może na chwilę przestać odpowiadać.
 - Natychmiastowe powiadomienia o nowych plikach mogą nie działać na dyskach sieciowych — agent wtedy po prostu
   sprawdza folder cyklicznie (widać to w stanie agenta).
 - Foldery synchronizowane z chmurą (OneDrive itp.) z plikami „tylko online” mogą być pobierane przy czytaniu
