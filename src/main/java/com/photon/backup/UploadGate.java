@@ -1,5 +1,7 @@
 package com.photon.backup;
 
+import com.photon.remote.Locations;
+
 import com.photon.phonearchive.PhoneArchiver;
 
 import java.io.IOException;
@@ -116,6 +118,9 @@ public class UploadGate implements PhoneArchiver.FileGate {
      * w Windows nie uda się, gdy plik jest właśnie zapisywany przez inny proces.
      */
     static boolean inUse(Path file) {
+        if (Locations.isRemote(file)) {
+            return false; // na serwerze nie da się sprawdzić blokady — wystarczy, że rozmiar i data się nie zmieniają
+        }
         if (!Files.isWritable(file)) {
             return false; // plik tylko do odczytu — nie da się sprawdzić blokadą, rozmiar i data muszą wystarczyć
         }

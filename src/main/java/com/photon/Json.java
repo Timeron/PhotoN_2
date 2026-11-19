@@ -50,12 +50,13 @@ public final class Json {
     private static ObjectMapper createMapper() {
         SimpleModule paths = new SimpleModule("paths");
         // Ścieżki zapisujemy jako zwykły tekst (czytelny i edytowalny ręcznie), a nie jako URI.
+        // Foldery na serwerach zdalnych: [Nazwa połączenia]/folder (patrz Locations).
         paths.addSerializer(Path.class, ToStringSerializer.instance);
         paths.addDeserializer(Path.class, new StdScalarDeserializer<>(Path.class) {
             @Override
             public Path deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
                 String value = p.getValueAsString();
-                return value == null || value.isBlank() ? null : Path.of(value);
+                return value == null || value.isBlank() ? null : com.photon.remote.Locations.parse(value);
             }
         });
 

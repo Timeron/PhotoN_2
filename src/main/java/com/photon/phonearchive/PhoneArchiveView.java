@@ -16,6 +16,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Spinner;
+import com.photon.ui.FolderField;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
@@ -54,6 +55,10 @@ public class PhoneArchiveView extends BorderPane {
 
     private final TextField sourceField = new TextField();
     private final TextField targetField = new TextField();
+    private FolderField sourceFolder;
+    private FolderField targetFolder;
+    private FolderField duplicatesFolder;
+    private FolderField thumbnailFolder;
     private final CheckBox includeSubfolders = new CheckBox("Uwzględnij podfoldery folderu archiwizowanego");
     private final Label dateFoldersWarning = new Label();
     private final Label dateFoldersInfo = new Label();
@@ -100,14 +105,14 @@ public class PhoneArchiveView extends BorderPane {
         setCenter(scroll);
         setBottom(buildActionBar());
 
-        sourceField.textProperty().addListener((obs, old, text) -> onFormChanged());
-        targetField.textProperty().addListener((obs, old, text) -> onFormChanged());
+        sourceFolder.pathProperty().addListener((obs, old, value) -> onFormChanged());
+        targetFolder.pathProperty().addListener((obs, old, value) -> onFormChanged());
         includeSubfolders.selectedProperty().addListener((obs, old, value) -> onFormChanged());
         makeThumbnails.selectedProperty().addListener((obs, old, value) -> onFormChanged());
         duplicateAction.valueProperty().addListener((obs, old, value) -> onFormChanged());
-        duplicatesField.textProperty().addListener((obs, old, text) -> onFormChanged());
+        duplicatesFolder.pathProperty().addListener((obs, old, value) -> onFormChanged());
         thumbnailSide.valueProperty().addListener((obs, old, value) -> onFormChanged());
-        thumbnailField.textProperty().addListener((obs, old, text) -> onFormChanged());
+        thumbnailFolder.pathProperty().addListener((obs, old, value) -> onFormChanged());
 
         setOptions(initial);
         profileBar.reloadProfiles();
@@ -132,14 +137,14 @@ public class PhoneArchiveView extends BorderPane {
     public void setOptions(PhoneArchiveOptions options) {
         suppressChanges = true;
         try {
-            sourceField.setText(options.source() == null ? "" : options.source().toString());
-            targetField.setText(options.target() == null ? "" : options.target().toString());
+            sourceFolder.setPath(options.source());
+            targetFolder.setPath(options.target());
             includeSubfolders.setSelected(options.includeSubfolders());
             makeThumbnails.setSelected(options.makeThumbnails());
             thumbnailSide.getValueFactory().setValue(options.thumbnailSide());
-            thumbnailField.setText(options.thumbnailTarget() == null ? "" : options.thumbnailTarget().toString());
+            thumbnailFolder.setPath(options.thumbnailTarget());
             duplicateAction.setValue(options.duplicateAction());
-            duplicatesField.setText(options.duplicatesTarget() == null ? "" : options.duplicatesTarget().toString());
+            duplicatesFolder.setPath(options.duplicatesTarget());
         } finally {
             suppressChanges = false;
         }
@@ -148,9 +153,9 @@ public class PhoneArchiveView extends BorderPane {
 
     public PhoneArchiveOptions options() {
         commitSpinner(thumbnailSide);
-        return new PhoneArchiveOptions(path(sourceField), path(targetField), includeSubfolders.isSelected(),
-                makeThumbnails.isSelected(), thumbnailSide.getValue(), path(thumbnailField),
-                duplicateAction.getValue(), path(duplicatesField));
+        return new PhoneArchiveOptions(sourceFolder.getPath(), targetFolder.getPath(), includeSubfolders.isSelected(),
+                makeThumbnails.isSelected(), thumbnailSide.getValue(), thumbnailFolder.getPath(),
+                duplicateAction.getValue(), duplicatesFolder.getPath());
     }
 
     public void showStatus(String text, boolean error) {
@@ -172,7 +177,7 @@ public class PhoneArchiveView extends BorderPane {
 
     /** Ponownie sprawdza foldery RRRR-MM-DD w archiwum (np. po zakończonej archiwizacji). */
     public void refreshDateFolders() {
-        Path target = path(targetField);
+        Path target = targetFolder.getPath();
         List<Path> folders = PhoneArchiver.dateFolders(target);
         String day = today.get().format(PhoneArchiver.DAY_FORMAT);
         boolean show = target != null && folders.isEmpty();
@@ -186,7 +191,7 @@ public class PhoneArchiveView extends BorderPane {
     }
 
     public boolean hasDateFolders() {
-        return !PhoneArchiver.dateFolders(path(targetField)).isEmpty();
+        return !PhoneArchiver.dateFolders(targetFolder.getPath()).isEmpty();
     }
 
     private void onFormChanged() {
@@ -215,9 +220,11 @@ public class PhoneArchiveView extends BorderPane {
     private Node buildFoldersSection() {
         GridPane grid = formGrid();
         grid.addRow(0, fieldLabel("Folder archiwizowany"),
-                folderRow(sourceField, "Wskaż folder ze zdjęciami i filmami do archiwizacji", "Folder archiwizowany"));
+                sourceFolder = new FolderField(sourceField, "Wskaż folder ze zdjęciami i filmami do archiwizacji",
+                        "Folder archiwizowany"));
         grid.addRow(1, fieldLabel("Folder archiwum"),
-                folderRow(targetField, "Wskaż folder archiwum z podfolderami RRRR-MM-DD", "Folder archiwum"));
+                targetFolder = new FolderField(targetField, "Wskaż folder archiwum z podfolderami RRRR-MM-DD",
+                        "Folder archiwum"));
         includeSubfolders.setWrapText(true);
 
         dateFoldersWarning.setGraphic(new FontIcon(MaterialDesignA.ALERT_OUTLINE));
@@ -242,7 +249,7 @@ public class PhoneArchiveView extends BorderPane {
         GridPane grid = formGrid();
         grid.addRow(0, fieldLabel("Co zrobić z duplikatami"), duplicateAction);
         Label folderLabel = fieldLabel("Folder zastępczy (śmietnik)");
-        HBox folderRow = folderRow(duplicatesField, "Wskaż folder, do którego trafią duplikaty",
+        HBox folderRow = duplicatesFolder = new FolderField(duplicatesField, "Wskaż folder, do którego trafią duplikaty",
                 "Folder zastępczy (śmietnik) na duplikaty");
         grid.addRow(1, folderLabel, folderRow);
         var moving = duplicateAction.valueProperty().isEqualTo(PhoneDuplicateAction.MOVE_TO_FOLDER);
@@ -266,7 +273,8 @@ public class PhoneArchiveView extends BorderPane {
         grid.addRow(0, fieldLabel("Dłuższy bok miniatury"), withSuffix(thumbnailSide, "px",
                 "Szerokość zdjęć poziomych i wysokość pionowych. Mniejsze zdjęcia nie są powiększane."));
         grid.addRow(1, fieldLabel("Folder na miniatury"),
-                folderRow(thumbnailField, "Wskaż folder, w którym zostaną zapisane miniatury", "Folder na miniatury"));
+                thumbnailFolder = new FolderField(thumbnailField, "Wskaż folder, w którym zostaną zapisane miniatury",
+                        "Folder na miniatury"));
 
         Label layout = infoBanner("Miniatury trafiają do podfolderu z dzisiejszą datą (jak w archiwum) i mają "
                 + "te same nazwy plików co zarchiwizowane zdjęcia. Tworzone są tylko dla zdjęć przeniesionych "
@@ -303,26 +311,6 @@ public class PhoneArchiveView extends BorderPane {
                 media, duplicates, protectedFolders);
     }
 
-    private HBox folderRow(TextField field, String prompt, String chooserTitle) {
-        field.setPromptText(prompt);
-        Button browse = new Button("Wybierz…", new FontIcon(MaterialDesignF.FOLDER_OPEN_OUTLINE));
-        browse.setOnAction(e -> {
-            DirectoryChooser chooser = new DirectoryChooser();
-            chooser.setTitle(chooserTitle);
-            Path current = path(field);
-            if (current != null && Files.isDirectory(current)) {
-                chooser.setInitialDirectory(current.toFile());
-            }
-            File dir = chooser.showDialog(getScene().getWindow());
-            if (dir != null) {
-                field.setText(dir.getAbsolutePath());
-            }
-        });
-        HBox row = new HBox(8, field, browse);
-        HBox.setHgrow(field, Priority.ALWAYS);
-        row.setAlignment(Pos.CENTER_LEFT);
-        return row;
-    }
 
     private static Label infoBanner(String text) {
         Label label = new Label(text, new FontIcon(MaterialDesignI.INFORMATION_OUTLINE));
@@ -384,15 +372,4 @@ public class PhoneArchiveView extends BorderPane {
         onStart.accept(options);
     }
 
-    private static Path path(TextField field) {
-        String text = field.getText() == null ? "" : field.getText().trim();
-        if (text.isEmpty()) {
-            return null;
-        }
-        try {
-            return Path.of(text).toAbsolutePath().normalize();
-        } catch (InvalidPathException e) {
-            return null;
-        }
-    }
 }

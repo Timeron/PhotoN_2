@@ -12,11 +12,14 @@ import com.drew.metadata.mp4.Mp4Directory;
 import com.drew.metadata.mp4.media.Mp4VideoDirectory;
 import com.drew.metadata.png.PngDirectory;
 
+import com.photon.remote.Locations;
+
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReadParam;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -119,7 +122,9 @@ public final class Fingerprints {
     }
 
     private static BufferedImage readScaledDown(Path file) throws IOException {
-        try (ImageInputStream in = ImageIO.createImageInputStream(file.toFile())) {
+        // Plik z serwera zdalnego czytamy strumieniem (nie ma go na dysku jako java.io.File).
+        try (InputStream source = Locations.isRemote(file) ? new BufferedInputStream(Files.newInputStream(file)) : null;
+             ImageInputStream in = ImageIO.createImageInputStream(source != null ? source : file.toFile())) {
             if (in == null) {
                 throw new IOException("Nie można otworzyć pliku");
             }
@@ -158,7 +163,13 @@ public final class Fingerprints {
     public static String metadataKey(Path file) throws IOException {
         Metadata metadata;
         try {
-            metadata = ImageMetadataReader.readMetadata(file.toFile());
+            if (Locations.isRemote(file)) {
+                try (InputStream in = new BufferedInputStream(Files.newInputStream(file))) {
+                    metadata = ImageMetadataReader.readMetadata(in, Files.size(file));
+                }
+            } else {
+                metadata = ImageMetadataReader.readMetadata(file.toFile());
+            }
         } catch (com.drew.imaging.ImageProcessingException e) {
             return null;
         }

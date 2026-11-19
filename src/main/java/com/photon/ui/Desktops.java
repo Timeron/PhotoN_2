@@ -1,5 +1,6 @@
 package com.photon.ui;
 
+import com.photon.remote.Locations;
 import javafx.application.Platform;
 
 import java.awt.Desktop;
@@ -24,6 +25,10 @@ public final class Desktops {
      * ewentualny błąd jest przekazywany do {@code onError} w wątku JavaFX.
      */
     public static void openFolder(Path dir, Consumer<String> onError) {
+        if (Locations.isRemote(dir)) {
+            onError.accept(remoteFolderMessage(dir));
+            return;
+        }
         Thread thread = new Thread(() -> {
             try {
                 Files.createDirectories(dir);
@@ -42,6 +47,10 @@ public final class Desktops {
 
     /** Otwiera folder zawierający plik i zaznacza ten plik (na Windows przez Eksplorator). */
     public static void showInFolder(Path file, Consumer<String> onError) {
+        if (Locations.isRemote(file)) {
+            onError.accept(remoteFolderMessage(file.getParent()));
+            return;
+        }
         runInBackground("show-in-folder", onError, () -> {
             if (WINDOWS) {
                 new ProcessBuilder("explorer.exe", "/select,", file.toAbsolutePath().toString()).start();
@@ -53,7 +62,24 @@ public final class Desktops {
 
     /** Otwiera plik w domyślnym programie systemu. */
     public static void openFile(Path file, Consumer<String> onError) {
-        runInBackground("open-file", onError, () -> Desktop.getDesktop().open(file.toFile()));
+        runInBackground("open-file", onError, () -> Desktop.getDesktop().open(localCopy(file).toFile()));
+    }
+
+    /** Plik z serwera zdalnego jest najpierw pobierany do folderu tymczasowego (do podglądu). */
+    private static Path localCopy(Path file) throws java.io.IOException {
+        if (!Locations.isRemote(file)) {
+            return file;
+        }
+        Path dir = Path.of(System.getProperty("java.io.tmpdir"), "PhotoN-podglad", Locations.serverName(file));
+        Files.createDirectories(dir);
+        Path copy = dir.resolve(file.getFileName().toString());
+        Files.copy(file, copy, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        return copy;
+    }
+
+    private static String remoteFolderMessage(Path dir) {
+        return "Ten folder jest na serwerze „" + Locations.serverName(dir) + "” (" + Locations.remoteFolder(dir)
+                + ") — Eksplorator go nie otworzy. Użyj programu do FTP/SFTP.";
     }
 
     @FunctionalInterface

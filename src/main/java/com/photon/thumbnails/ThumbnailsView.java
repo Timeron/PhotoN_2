@@ -11,6 +11,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Spinner;
+import com.photon.ui.FolderField;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
@@ -45,6 +46,8 @@ public class ThumbnailsView extends BorderPane {
 
     private final TextField sourceField = new TextField();
     private final TextField targetField = new TextField();
+    private FolderField sourceFolder;
+    private FolderField targetFolder;
     private final Spinner<Integer> maxSide =
             new Spinner<>(ThumbnailOptions.MIN_SIDE, ThumbnailOptions.MAX_SIDE, ThumbnailOptions.DEFAULT_SIDE, 10);
     private final CheckBox includeSubfolders =
@@ -80,8 +83,8 @@ public class ThumbnailsView extends BorderPane {
         setCenter(scroll);
         setBottom(buildActionBar());
 
-        sourceField.textProperty().addListener((obs, old, text) -> onFormChanged());
-        targetField.textProperty().addListener((obs, old, text) -> onFormChanged());
+        sourceFolder.pathProperty().addListener((obs, old, value) -> onFormChanged());
+        targetFolder.pathProperty().addListener((obs, old, value) -> onFormChanged());
         maxSide.valueProperty().addListener((obs, old, value) -> onFormChanged());
         includeSubfolders.selectedProperty().addListener((obs, old, value) -> onFormChanged());
         overwrite.selectedProperty().addListener((obs, old, value) -> onFormChanged());
@@ -111,8 +114,8 @@ public class ThumbnailsView extends BorderPane {
     public void setOptions(ThumbnailOptions options) {
         suppressChanges = true;
         try {
-            sourceField.setText(options.source() == null ? "" : options.source().toString());
-            targetField.setText(options.target() == null ? "" : options.target().toString());
+            sourceFolder.setPath(options.source());
+            targetFolder.setPath(options.target());
             maxSide.getValueFactory().setValue(options.maxSide());
             includeSubfolders.setSelected(options.includeSubfolders());
             overwrite.setSelected(options.overwrite());
@@ -142,7 +145,7 @@ public class ThumbnailsView extends BorderPane {
     /** Bieżące wartości formularza (ścieżki mogą być null, gdy pole jest puste lub niepoprawne). */
     public ThumbnailOptions options() {
         commitSpinner(maxSide);
-        return new ThumbnailOptions(path(sourceField), path(targetField), maxSide.getValue(),
+        return new ThumbnailOptions(sourceFolder.getPath(), targetFolder.getPath(), maxSide.getValue(),
                 includeSubfolders.isSelected(), overwrite.isSelected());
     }
 
@@ -164,9 +167,11 @@ public class ThumbnailsView extends BorderPane {
     private Node buildFoldersSection() {
         GridPane grid = formGrid();
         grid.addRow(0, fieldLabel("Folder ze zdjęciami"),
-                folderRow(sourceField, "Wskaż folder, z którego zdjęć powstaną miniatury", "Folder ze zdjęciami"));
+                sourceFolder = new FolderField(sourceField, "Wskaż folder, z którego zdjęć powstaną miniatury",
+                        "Folder ze zdjęciami"));
         grid.addRow(1, fieldLabel("Folder na miniatury"),
-                folderRow(targetField, "Wskaż folder, w którym zostaną zapisane miniatury", "Folder na miniatury"));
+                targetFolder = new FolderField(targetField, "Wskaż folder, w którym zostaną zapisane miniatury",
+                        "Folder na miniatury"));
         includeSubfolders.setWrapText(true);
         return new FormSection(MaterialDesignF.FOLDER_IMAGE,
                 "Foldery",
@@ -201,26 +206,6 @@ public class ThumbnailsView extends BorderPane {
                 metadata, formats, overwrite);
     }
 
-    private HBox folderRow(TextField field, String prompt, String chooserTitle) {
-        field.setPromptText(prompt);
-        Button browse = new Button("Wybierz…", new FontIcon(MaterialDesignF.FOLDER_OPEN_OUTLINE));
-        browse.setOnAction(e -> {
-            DirectoryChooser chooser = new DirectoryChooser();
-            chooser.setTitle(chooserTitle);
-            Path current = path(field);
-            if (current != null && Files.isDirectory(current)) {
-                chooser.setInitialDirectory(current.toFile());
-            }
-            File dir = chooser.showDialog(getScene().getWindow());
-            if (dir != null) {
-                field.setText(dir.getAbsolutePath());
-            }
-        });
-        HBox row = new HBox(8, field, browse);
-        HBox.setHgrow(field, Priority.ALWAYS);
-        row.setAlignment(Pos.CENTER_LEFT);
-        return row;
-    }
 
     private static Label infoBanner(String text) {
         Label label = new Label(text, new FontIcon(MaterialDesignI.INFORMATION_OUTLINE));
@@ -281,15 +266,4 @@ public class ThumbnailsView extends BorderPane {
         onStart.accept(options);
     }
 
-    private static Path path(TextField field) {
-        String text = field.getText() == null ? "" : field.getText().trim();
-        if (text.isEmpty()) {
-            return null;
-        }
-        try {
-            return Path.of(text).toAbsolutePath().normalize();
-        } catch (InvalidPathException e) {
-            return null;
-        }
-    }
 }

@@ -4,6 +4,7 @@ import com.photon.Json;
 import com.photon.duplicates.scan.HashCache;
 import com.photon.phonearchive.PhoneArchiveOptions;
 import com.photon.phonearchive.PhoneArchiver;
+import com.photon.remote.Locations;
 import com.photon.ui.Texts;
 
 import java.io.IOException;
@@ -163,6 +164,10 @@ public class AgentLoop {
             log("Polecenia będą odczytywane co " + describe(heartbeat) + " (brak powiadomień: " + e.getMessage() + ").");
         }
         processCommands();
+        if (Locations.isRemote(options.source())) {
+            log("Folder do archiwizacji jest na serwerze " + Locations.serverName(options.source())
+                    + " — serwer nie powiadamia o nowych plikach, więc działa tylko sprawdzanie cykliczne.");
+        }
         try {
             while (!stopRequested) {
                 ensureSourceWatcher();
@@ -286,6 +291,9 @@ public class AgentLoop {
     private void ensureSourceWatcher() {
         if (sourceWatcher != null && sourceWatcher.isActive()) {
             return;
+        }
+        if (Locations.isRemote(options.source())) {
+            return; // serwer zdalny — tylko sprawdzanie cykliczne
         }
         boolean hadWatcher = sourceWatcher != null;
         if (sourceWatcher != null) {

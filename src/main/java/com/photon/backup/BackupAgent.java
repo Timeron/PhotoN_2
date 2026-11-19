@@ -109,6 +109,7 @@ public final class BackupAgent {
             return EXIT_ALREADY_RUNNING;
         } finally {
             tray.ifPresent(AgentTray::remove);
+            com.photon.remote.RemoteFileSystemProvider.instance().closeAll();
             finished.countDown();
             try {
                 Runtime.getRuntime().removeShutdownHook(hook);

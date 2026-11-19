@@ -31,6 +31,12 @@ public class PhotonApp extends Application {
     private static final PseudoClass MAXIMIZED = PseudoClass.getPseudoClass("maximized");
 
     @Override
+    public void stop() {
+        // Zamyka połączenia z serwerami zdalnymi (logout), zamiast zostawiać je do rozłączenia przez serwer.
+        com.photon.remote.RemoteFileSystemProvider.instance().closeAll();
+    }
+
+    @Override
     public void start(Stage stage) {
         SettingsService settings = new SettingsService(AppPaths.settingsFile());
         JsonFileStore<AppState> stateStore =

@@ -37,6 +37,10 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import com.photon.remote.Locations;
+import com.photon.remote.RemoteServers;
+import com.photon.ui.Dialogs;
+import com.photon.ui.FolderField;
 import javafx.stage.DirectoryChooser;
 import org.kordamp.ikonli.Ikon;
 import org.kordamp.ikonli.javafx.FontIcon;
@@ -111,6 +115,7 @@ public class DuplicateSearchView extends BorderPane {
     private final ComboBox<DuplicateAction> action =
             new ComboBox<>(FXCollections.observableArrayList(DuplicateAction.values()));
     private final TextField moveTarget = new TextField();
+    private FolderField moveFolder;
     private final CheckBox saveReport = new CheckBox("Zapisz raport z wynikami do pliku CSV");
 
     // --- Wydajność ---
@@ -195,7 +200,10 @@ public class DuplicateSearchView extends BorderPane {
         down.disableProperty().bind(noSelection);
         remove.disableProperty().bind(noSelection);
 
-        HBox toolbar = new HBox(8, add, spacer(), up, down, remove);
+        Button addRemote = remoteButton("Z serwera…", "Dodaj folder z serwera zdalnego (Ustawienia → Serwery zdalne)");
+        addRemote.setOnAction(e -> Dialogs.chooseServerFolder(getScene().getWindow())
+                .ifPresent(p -> addUnique(locations, p)));
+        HBox toolbar = new HBox(8, add, addRemote, spacer(), up, down, remove);
         toolbar.setAlignment(Pos.CENTER_LEFT);
 
         // Wykluczenia
@@ -209,8 +217,11 @@ public class DuplicateSearchView extends BorderPane {
         removeExclusion.setOnAction(e -> exclusions.remove(exclusionList.getSelectionModel().getSelectedItem()));
         removeExclusion.disableProperty().bind(exclusionList.getSelectionModel().selectedItemProperty().isNull());
 
+        Button excludeRemote = remoteButton("Z serwera…", "Wyklucz folder na serwerze zdalnym");
+        excludeRemote.setOnAction(e -> Dialogs.chooseServerFolder(getScene().getWindow())
+                .ifPresent(p -> addUnique(exclusions, p)));
         HBox exclusionToolbar = new HBox(8, fieldLabel("Foldery wykluczone ze skanowania"), spacer(),
-                addExclusion, removeExclusion);
+                addExclusion, excludeRemote, removeExclusion);
         exclusionToolbar.setAlignment(Pos.CENTER_LEFT);
 
         VBox options = new VBox(10, includeSubfolders, skipHidden, crossLocationOnly);
@@ -367,13 +378,8 @@ public class DuplicateSearchView extends BorderPane {
         keepStrategy.setMaxWidth(Double.MAX_VALUE);
         action.setMaxWidth(Double.MAX_VALUE);
 
-        moveTarget.setPromptText("Wybierz folder, do którego trafią duplikaty");
-        moveTarget.setEditable(false);
-        Button browse = new Button("Wybierz…", new FontIcon(MaterialDesignF.FOLDER_OPEN_OUTLINE));
-        browse.setOnAction(e -> chooseFolder("Folder na duplikaty")
-                .ifPresent(p -> moveTarget.setText(p.toString())));
-        HBox targetRow = new HBox(8, moveTarget, browse);
-        HBox.setHgrow(moveTarget, Priority.ALWAYS);
+        moveFolder = new FolderField(moveTarget, "Wybierz folder, do którego trafią duplikaty", "Folder na duplikaty");
+        HBox targetRow = moveFolder;
 
         GridPane grid = formGrid();
         grid.addRow(0, fieldLabel("Oryginał do zachowania"), keepStrategy);
@@ -464,7 +470,7 @@ public class DuplicateSearchView extends BorderPane {
         dateTo.valueProperty().addListener(changed);
         keepStrategy.valueProperty().addListener(changed);
         action.valueProperty().addListener(changed);
-        moveTarget.textProperty().addListener(changed);
+        moveFolder.pathProperty().addListener(changed);
     }
 
     private void onFormChanged() {
@@ -577,7 +583,7 @@ public class DuplicateSearchView extends BorderPane {
                 dateTo.getValue(),
                 keepStrategy.getValue(),
                 action.getValue(),
-                moveTarget.getText().isBlank() ? null : Path.of(moveTarget.getText()),
+                moveFolder.getPath(),
                 saveReport.isSelected(),
                 threads.getValue(),
                 hashCache.isSelected(),
@@ -617,7 +623,7 @@ public class DuplicateSearchView extends BorderPane {
 
             keepStrategy.setValue(Objects.requireNonNullElse(o.keepStrategy(), KeepStrategy.OLDEST));
             action.setValue(Objects.requireNonNullElse(o.action(), DuplicateAction.REPORT_ONLY));
-            moveTarget.setText(o.moveTarget() == null ? "" : o.moveTarget().toString());
+            moveFolder.setPath(o.moveTarget());
             saveReport.setSelected(o.saveReport());
 
             threads.getValueFactory().setValue(Math.max(1, o.threads() == 0 ? CPU_CORES : o.threads()));
@@ -697,6 +703,17 @@ public class DuplicateSearchView extends BorderPane {
         return Optional.ofNullable(dir).map(File::toPath);
     }
 
+    /** Przycisk dodawania folderu z serwera — widoczny, gdy zdefiniowano serwery zdalne. */
+    private static Button remoteButton(String text, String tooltip) {
+        Button button = new Button(text, new FontIcon(MaterialDesignS.SERVER_NETWORK));
+        button.setTooltip(new javafx.scene.control.Tooltip(tooltip));
+        Runnable refresh = () -> button.setVisible(!RemoteServers.all().isEmpty());
+        refresh.run();
+        button.managedProperty().bind(button.visibleProperty());
+        RemoteServers.addListener(() -> javafx.application.Platform.runLater(refresh));
+        return button;
+    }
+
     private static void addUnique(ObservableList<Path> list, Path path) {
         Path normalized = path.toAbsolutePath().normalize();
         if (!list.contains(normalized)) {
@@ -743,6 +760,7 @@ public class DuplicateSearchView extends BorderPane {
                     setGraphic(null);
                 } else {
                     setText(path.toString());
+                    icon.setIconCode(Locations.isRemote(path) ? MaterialDesignS.SERVER_NETWORK : MaterialDesignF.FOLDER_OUTLINE);
                     setGraphic(icon);
                 }
             }

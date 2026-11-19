@@ -338,6 +338,53 @@ photon-backup --list                lista profili „Archiwizacji telefonu”
 - Ustawienia *limit pamięci podręcznej*, *dźwięk po zakończeniu* i *poziom szczegółowości dziennika* są
   zapisywane, ale **jeszcze nie są wykorzystywane** przez aplikację.
 
+### 5.6a. Serwery zdalne (FTP, FTPS, SFTP)
+
+Foldery mogą leżeć na serwerze: w **Szukaj duplikatów**, **Archiwizacji telefonu** (folder archiwizowany,
+archiwum, śmietnik na duplikaty, miniatury), **Miniaturyzacji** i — przez profil archiwizacji — w **Kopii
+zapasowej**.
+
+**Konfiguracja (jedno miejsce dla całej aplikacji):** Ustawienia → *Serwery zdalne*.
+- *Dodaj serwer* → nazwa połączenia (np. `NAS`), protokół, adres, port (puste = domyślny), użytkownik, hasło.
+- Protokoły: **FTP** (bez szyfrowania), **FTPS jawny** (FTPES, port 21), **FTPS niejawny** (port 990),
+  **SFTP** (SSH, port 22). Dla FTP/FTPS można wyłączyć tryb pasywny (domyślnie włączony — działa za routerem).
+- **Testuj połączenie** łączy się, loguje i odczytuje wskazany folder; pokazuje czas i liczbę pozycji.
+- **Zapisz połączenie** — zmiany połączeń zapisują się od razu (niezależnie od przycisku „Zapisz” ustawień).
+  Otwarte połączenia ze zmienionym serwerem są zamykane.
+- SFTP: klucz serwera jest **zapamiętywany przy pierwszym połączeniu**. Jeśli później się zmieni, PhotoN
+  odmówi połączenia (zanim wyśle hasło) — to może oznaczać podszywanie się pod serwer. Po reinstalacji
+  serwera kliknij *Zapomnij klucz* i zapisz połączenie.
+- FTPS: certyfikat serwera nie jest weryfikowany (sprawdzana jest tylko data ważności) — NAS-y zwykle mają
+  certyfikaty samopodpisane. Szyfrowanie chroni przed podsłuchem, ale nie przed podszyciem się pod serwer.
+- **Hasła są zapisywane zwykłym tekstem** w `servers.json` w folderze danych PhotoN.
+
+**W zakładkach** przy polu folderu pojawia się lista *Ten komputer / nazwa połączenia* (gdy zdefiniowano
+co najmniej jeden serwer). Po wybraniu połączenia wpisujesz folder na serwerze (np. `/zdjecia/telefon`)
+albo klikasz *Wybierz…*, by przejrzeć foldery serwera. W „Szukaj duplikatów” foldery z serwera dodaje
+przycisk *Z serwera…*. W profilach folder zapisuje się jako `[NAS]/zdjecia/telefon` — dlatego po zmianie
+nazwy połączenia profile trzeba poprawić (można też wkleić taką pełną ścieżkę do pola folderu).
+
+**Jak to działa i na co uważać:**
+- Porównywanie plików (SHA-256, podobieństwo, metadane) wymaga **pobrania pliku z serwera**. Pierwsze
+  przeszukanie dużego archiwum na serwerze trwa więc tyle, ile pobranie całego archiwum; kolejne są szybkie
+  dzięki pamięci sum (gdy rozmiar i data pliku się nie zmieniły). Przy archiwizacji pobierane są tylko pliki
+  archiwum o takim samym rozmiarze jak nowe zdjęcia.
+- Przenoszenie w obrębie jednego serwera to zmiana nazwy (szybka). Między serwerem a dyskiem albo dwoma
+  serwerami plik jest kopiowany przez plik tymczasowy `.photon-tmp`, sprawdzany i dopiero wtedy usuwany
+  ze źródła.
+- **Serwer nie ma kosza** — pliki na serwerze są usuwane trwale, także gdy w ustawieniach włączone jest
+  usuwanie do kosza (dziennik operacji zapisuje „USUNIĘTO (serwer — bez kosza)”).
+- Data modyfikacji jest przenoszona na serwer, jeśli serwer na to pozwala (FTP: polecenie MFMT, SFTP: zawsze).
+- Niedostępny serwer działa jak odłączony dysk sieciowy (patrz [4](#4-na-co-zwracać-uwagę)): archiwizacja nic
+  nie przenosi i czeka. Po nieudanej próbie połączenia kolejne przez 30 s od razu zgłaszają ten sam błąd,
+  zamiast za każdym razem czekać do 15 s na odpowiedź — ale pierwsza próba może na chwilę zatrzymać okno.
+- Agent kopii zapasowej z folderem źródłowym na serwerze: serwer nie powiadamia o nowych plikach, więc działa
+  tylko sprawdzanie cykliczne (co 15 s, a po 15 minutach ciszy co 15 minut). Plik jest uznawany za w pełni
+  przesłany, gdy jego rozmiar i data nie zmieniają się przez 30 s (blokady pliku nie da się sprawdzić na serwerze).
+- *Otwórz folder* w Eksploratorze nie działa dla folderów na serwerze (pojawia się komunikat). Otwarcie
+  pliku z serwera (np. w wynikach duplikatów) najpierw pobiera go do folderu tymczasowego.
+- Ukryte pliki i foldery: na serwerze ukryte są tylko nazwy zaczynające się od kropki.
+
 ### 5.7. Archiwizacja
 
 Moduł w przygotowaniu (na razie tylko ekran informacyjny).
@@ -352,6 +399,7 @@ Można go zmienić właściwością Javy `-Dphoton.dataDir=<folder>` (używają 
 | Ścieżka | Zawartość |
 |---|---|
 | `settings.json` | Ustawienia aplikacji |
+| `servers.json` | Połączenia z serwerami FTP/FTPS/SFTP — **z hasłami zapisanymi zwykłym tekstem** |
 | `state.json` | Rozmiar i położenie okna, ostatnia sekcja |
 | `profiles\duplicates\`, `profiles\thumbnails\`, `profiles\phone-archive\` | Profile modułów |
 | `thumbnails.json`, `phone-archive.json` | Ostatnio użyte ustawienia formularzy |

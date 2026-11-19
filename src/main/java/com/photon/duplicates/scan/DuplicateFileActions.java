@@ -1,5 +1,7 @@
 package com.photon.duplicates.scan;
 
+import com.photon.remote.Locations;
+
 import java.awt.Desktop;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -207,6 +209,12 @@ public final class DuplicateFileActions {
             String entry;
             switch (mode) {
                 case TRASH -> {
+                    if (Locations.isRemote(path)) {
+                        // Serwer nie ma kosza — plik jest usuwany trwale (okno potwierdzenia o tym uprzedza).
+                        Files.delete(path);
+                        entry = "USUNIĘTO (serwer — bez kosza)\t" + path;
+                        break;
+                    }
                     if (!Desktop.isDesktopSupported()
                             || !Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH)) {
                         throw new IOException("System nie obsługuje przenoszenia do kosza");

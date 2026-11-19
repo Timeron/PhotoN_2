@@ -113,6 +113,7 @@ public class SettingsView extends BorderPane {
         VBox form = new VBox(18,
                 buildGeneralSection(),
                 buildFilesSection(),
+                buildRemoteServersSection(),
                 buildSafetySection(),
                 buildPerformanceSection(),
                 buildNotificationsSection(),
@@ -181,6 +182,14 @@ public class SettingsView extends BorderPane {
                 grid,
                 hint("Pamięć podręczna przechowuje sumy kontrolne i miniatury, dzięki czemu kolejne skanowania "
                         + "są szybsze. Można ją bezpiecznie wyczyścić."));
+    }
+
+    private Node buildRemoteServersSection() {
+        return new FormSection(MaterialDesignS.SERVER_NETWORK,
+                "Serwery zdalne",
+                "Połączenia FTP, FTPS i SFTP — zdefiniowane raz, w zakładkach wybierasz tylko nazwę i folder. "
+                        + "Zmiany połączeń zapisują się od razu.",
+                new RemoteServersPane());
     }
 
     private Node buildSafetySection() {

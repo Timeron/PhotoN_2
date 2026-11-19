@@ -1321,3 +1321,18 @@
     -fx-font-family: "Consolas", monospace;
     -fx-font-size: 12px;
 }
+
+/* ===== Foldery na serwerach zdalnych ===== */
+.folder-location {
+    -fx-pref-width: 150;
+    -fx-min-width: 120;
+}
+
+.remote-current {
+    -fx-font-family: "Consolas", monospace;
+    -fx-text-fill: -ph-text;
+}
+
+.remote-editor {
+    -fx-padding: 4 0 0 0;
+}

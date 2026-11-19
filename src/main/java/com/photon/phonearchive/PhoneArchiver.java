@@ -7,6 +7,7 @@ import com.photon.duplicates.scan.ProtectedPaths;
 import com.photon.duplicates.scan.ScannedFile;
 import com.photon.thumbnails.ThumbnailGenerator;
 import com.photon.thumbnails.ThumbnailMaker;
+import com.photon.remote.Locations;
 import com.photon.ui.Texts;
 
 import java.awt.Desktop;
@@ -475,7 +476,7 @@ public class PhoneArchiver {
     private static void transfer(Path file, Path destination, boolean keepOriginal) throws IOException {
         // Zwykłe przeniesienie tylko w obrębie jednego dysku. Między dyskami (zwłaszcza sieciowymi) zawsze
         // kopia do pliku tymczasowego i weryfikacja — po zerwaniu połączenia w archiwum nie zostaje niepełny plik.
-        if (!keepOriginal && sameStore(file, destination.getParent())) {
+        if (!keepOriginal && (Locations.sameServer(file, destination) || sameStore(file, destination.getParent()))) {
             try {
                 // Ten sam dysk: zwykła zmiana nazwy, bez kopiowania danych.
                 Files.move(file, destination);
@@ -526,6 +527,9 @@ public class PhoneArchiver {
     }
 
     private static boolean sameStore(Path file, Path folder) {
+        if (Locations.isRemote(file) || Locations.isRemote(folder)) {
+            return false; // różne połączenia albo serwer i dysk lokalny
+        }
         try {
             return Files.getFileStore(file).equals(Files.getFileStore(folder));
         } catch (IOException | RuntimeException e) {
@@ -563,7 +567,7 @@ public class PhoneArchiver {
      */
     public static RemovalOutcome removeFromSource(List<Duplicate> duplicates, boolean toTrash) {
         return processDuplicates(duplicates, file -> {
-            if (toTrash) {
+            if (toTrash && !Locations.isRemote(file)) { // serwer nie ma kosza — tam usuwamy trwale
                 if (!Desktop.getDesktop().moveToTrash(file.toFile())) {
                     throw new IOException("nie udało się przenieść do kosza");
                 }
