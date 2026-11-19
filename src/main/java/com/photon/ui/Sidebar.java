@@ -36,7 +36,8 @@ public class Sidebar extends VBox {
 
         VBox account = new VBox(4,
                 navButton(Section.PROFILES),
-                navButton(Section.SETTINGS));
+                navButton(Section.SETTINGS),
+                navButton(Section.HELP));
 
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);

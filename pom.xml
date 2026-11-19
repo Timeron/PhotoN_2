@@ -60,6 +60,18 @@
       <version>2.19.0</version>
     </dependency>
 
+    <!-- Instrukcja w aplikacji: odczyt Markdown (INSTRUKCJA.md) z tabelami -->
+    <dependency>
+      <groupId>org.commonmark</groupId>
+      <artifactId>commonmark</artifactId>
+      <version>0.24.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.commonmark</groupId>
+      <artifactId>commonmark-ext-gfm-tables</artifactId>
+      <version>0.24.0</version>
+    </dependency>
+
     <!-- Serwery zdalne: FTP / FTPS (Commons Net) i SFTP (JSch) -->
     <dependency>
       <groupId>commons-net</groupId>
@@ -122,6 +134,19 @@
   </dependencies>
 
   <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- Instrukcja z głównego folderu projektu — jedna kopia, pokazywana także w aplikacji (Pomoc). -->
+      <resource>
+        <directory>${project.basedir}</directory>
+        <includes>
+          <include>INSTRUKCJA.md</include>
+        </includes>
+        <targetPath>com/photon/help</targetPath>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

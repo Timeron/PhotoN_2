@@ -1336,3 +1336,114 @@
 .remote-editor {
     -fx-padding: 4 0 0 0;
 }
+
+/* ===== Pomoc (instrukcja w aplikacji) ===== */
+.help-sidebar {
+    -fx-min-width: 220;
+}
+
+.help-toc,
+.help-results {
+    -fx-background-color: transparent;
+}
+
+.help-result-section {
+    -fx-font-weight: bold;
+    -fx-text-fill: -ph-text;
+}
+
+.help-result-snippet {
+    -fx-text-fill: -ph-text-muted;
+    -fx-font-size: 12px;
+}
+
+.help-hit-count {
+    -fx-text-fill: -ph-text-muted;
+    -fx-min-width: 60;
+}
+
+.help-text {
+    -fx-fill: -ph-text;
+    -fx-font-size: 14px;
+}
+
+.help-h1 .help-text {
+    -fx-font-size: 28px;
+    -fx-font-weight: bold;
+}
+
+.help-h2 .help-text {
+    -fx-font-size: 22px;
+    -fx-font-weight: bold;
+}
+
+.help-h3 .help-text {
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+}
+
+.help-h4 .help-text {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
+.help-h2 {
+    -fx-padding: 18 0 2 0;
+}
+
+.help-h3,
+.help-h4 {
+    -fx-padding: 10 0 0 0;
+}
+
+.help-strong {
+    -fx-font-weight: bold;
+}
+
+.help-em {
+    -fx-font-style: italic;
+}
+
+.help-code {
+    -fx-font-family: "Consolas", monospace;
+    -fx-fill: #c4b5fd;
+}
+
+.help-code-block {
+    -fx-font-family: "Consolas", monospace;
+    -fx-font-size: 13px;
+    -fx-text-fill: -ph-text;
+    -fx-background-color: rgba(255, 255, 255, 0.05);
+    -fx-background-radius: 8;
+    -fx-padding: 10 14 10 14;
+}
+
+.help-table {
+    -fx-background-color: rgba(255, 255, 255, 0.03);
+    -fx-background-radius: 8;
+}
+
+.help-th {
+    -fx-background-color: rgba(255, 255, 255, 0.06);
+}
+
+.help-th .help-text {
+    -fx-font-weight: bold;
+}
+
+.help-link {
+    -fx-padding: 0;
+    -fx-font-size: 14px;
+}
+
+.help-block {
+    -fx-background-radius: 8;
+}
+
+.help-block:match {
+    -fx-background-color: rgba(124, 92, 255, 0.10);
+}
+
+.help-block:current {
+    -fx-background-color: rgba(124, 92, 255, 0.28);
+}

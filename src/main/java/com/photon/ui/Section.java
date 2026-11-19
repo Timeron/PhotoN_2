@@ -4,6 +4,7 @@ import org.kordamp.ikonli.Ikon;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignA;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignB;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignC;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignH;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignI;
 
 /**
@@ -17,7 +18,8 @@ public enum Section {
     THUMBNAILS("Miniaturyzacja", MaterialDesignI.IMAGE_SIZE_SELECT_LARGE),
     BACKUP("Kopia Zapasowa", MaterialDesignB.BACKUP_RESTORE),
     PROFILES("Profile", MaterialDesignA.ACCOUNT_MULTIPLE_OUTLINE),
-    SETTINGS("Ustawienia", MaterialDesignC.COG_OUTLINE);
+    SETTINGS("Ustawienia", MaterialDesignC.COG_OUTLINE),
+    HELP("Pomoc", MaterialDesignH.HELP_CIRCLE_OUTLINE);
 
     private final String title;
     private final Ikon icon;

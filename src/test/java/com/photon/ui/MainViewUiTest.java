@@ -83,7 +83,7 @@ class MainViewUiTest {
                 .map(ToggleButton::getText)
                 .toList();
         assertEquals(List.of("Szukaj Duplikatów", "Archiwizacja", "Archiwizacja telefonu", "Miniaturyzacja", "Kopia Zapasowa",
-                "Profile", "Ustawienia"), titles);
+                "Profile", "Ustawienia", "Pomoc"), titles);
     }
 
     @Test

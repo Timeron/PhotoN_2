@@ -1,5 +1,9 @@
 package com.photon.ui;
 
+import com.photon.help.HelpView;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
+
 import com.photon.PhotonApp;
 import com.photon.backup.BackupView;
 import com.photon.duplicates.DuplicateProfileSource;
@@ -44,6 +48,7 @@ public class MainView extends BorderPane {
     private BackupView backupView;
     private ProfilesView profilesView;
     private SettingsView settingsView;
+    private HelpView helpView;
 
     public MainView(SettingsService settings) {
         this.settings = settings;
@@ -55,6 +60,13 @@ public class MainView extends BorderPane {
         sidebar.selectedSectionProperty().addListener((obs, old, section) -> {
             if (section != null) {
                 showSection(section);
+            }
+        });
+        // F1 — instrukcja z każdego miejsca aplikacji.
+        addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == KeyCode.F1) {
+                sidebar.select(Section.HELP);
+                e.consume();
             }
         });
     }
@@ -110,6 +122,14 @@ public class MainView extends BorderPane {
                 contentArea.show("Ustawienia",
                         "Konfiguracja aplikacji. Zmiany zaczną obowiązywać po kliknięciu „Zapisz”.",
                         settingsView);
+            }
+            case HELP -> {
+                if (helpView == null) {
+                    helpView = new HelpView();
+                }
+                contentArea.show("Pomoc",
+                        "Instrukcja programu: spis treści po lewej, wyszukiwanie u góry (F1 otwiera ją z każdego miejsca).",
+                        helpView);
             }
             default -> contentArea.showPlaceholder(section.getTitle(),
                     "Ten moduł jest w przygotowaniu.",

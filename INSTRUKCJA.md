@@ -563,6 +563,19 @@ nazwy połączenia profile trzeba poprawić (można też wkleić taką pełną �
   pliku z serwera (np. w wynikach duplikatów) najpierw pobiera go do folderu tymczasowego.
 - Ukryte pliki i foldery: na serwerze ukryte są tylko nazwy zaczynające się od kropki.
 
+### 5.6b. Pomoc (ta instrukcja w aplikacji)
+
+Sekcja **Pomoc** w pasku bocznym (albo klawisz **F1** z dowolnego miejsca) pokazuje tę instrukcję w programie:
+- **spis treści** po lewej — kliknięcie przewija do rozdziału; odnośniki w tekście też działają,
+- **wyszukiwanie** u góry — wszystkie wpisane słowa w jednym fragmencie, bez względu na wielkość liter i polskie
+  znaki („zrodlo” znajdzie „źródło”); zamiast spisu treści pojawia się lista wyników z fragmentem tekstu,
+  trafienia są podświetlone; **Enter** / strzałki przechodzą do następnego (Shift+Enter — do poprzedniego),
+  **Esc** czyści wyszukiwanie.
+
+Treść pochodzi z pliku `INSTRUKCJA.md` z głównego folderu projektu — przy budowaniu trafia do programu, więc
+pomoc w aplikacji jest zawsze zgodna z tym plikiem (wystarczy edytować `INSTRUKCJA.md` i zbudować program).
+Test sprawdza, że każdy odnośnik `#…` w instrukcji prowadzi do istniejącego miejsca.
+
 ### 5.7. Archiwizacja
 
 Moduł w przygotowaniu (na razie tylko ekran informacyjny).
