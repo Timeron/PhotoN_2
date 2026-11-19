@@ -74,8 +74,10 @@ public class AgentControl {
         if (!Files.isRegularFile(files.status())) {
             return Optional.empty();
         }
-        try {
-            return Optional.of(Json.mapper().readValue(files.status().toFile(), AgentStatus.class));
+        // Odczyt przez NIO: w Windows nie blokuje agentowi podmiany pliku (java.io.File by blokował),
+        // więc zapis stanu się nie gubi, gdy PhotoN akurat czyta.
+        try (var in = Files.newInputStream(files.status())) {
+            return Optional.of(Json.mapper().readValue(in, AgentStatus.class));
         } catch (IOException e) {
             return Optional.empty(); // akurat zapisywany — spróbujemy za chwilę
         }

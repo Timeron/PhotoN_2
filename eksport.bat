@@ -31,6 +31,14 @@ if exist "%DIST%\PhotoN\PhotoN.exe" (
     )
 )
 
+rem Agent kopii zapasowej uruchomiony z dist\PhotoN (np. przez autostart.bat) blokuje pliki programu.
+powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*\dist\PhotoN\*' -and $_.Name -match 'java|photon' }) { exit 1 }"
+if errorlevel 1 (
+    echo [BŁĄD] Działa agent kopii zapasowej z %DIST%\PhotoN - zatrzymaj go przed eksportem
+    echo        ^(ikona przy zegarze - Zatrzymaj kopię zapasową, albo %DIST%\PhotoN\photon-backup.exe --stop^).
+    exit /b 1
+)
+
 echo [1/4] Budowanie aplikacji i kopiowanie bibliotek...
 if exist "%INPUT%" rmdir /s /q "%INPUT%"
 call mvn -q -DskipTests package dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=%INPUT%
@@ -53,6 +61,10 @@ jpackage --type app-image --name PhotoN --app-version %APP_VERSION% --vendor Pho
     --jlink-options "--strip-debug --no-man-pages --no-header-files" ^
     --add-launcher photon-backup=src\jpackage\photon-backup.properties ^
     --dest "%DIST%"
+if errorlevel 1 goto :error
+
+rem Skrypt włączający uruchamianie agenta razem z Windows - działa z folderu programu.
+copy /y "autostart.bat" "%DIST%\PhotoN\autostart.bat" >nul
 if errorlevel 1 goto :error
 
 echo [4/4] Pakowanie do ZIP...

@@ -158,9 +158,140 @@ class AgentLoopTest {
         assertTrue(control.logTail(100).stream().anyMatch(l -> l.contains("znowu dostępne")));
     }
 
+    @Test
+    void idleAgentWaitsForEventsWithoutTouchingDisk() throws Exception {
+        Path upload = Files.createDirectories(dir.resolve("Upload"));
+        Path archive = dir.resolve("Archiwum");
+        AgentFiles files = AgentFiles.in(dir.resolve("backup"));
+        AgentControl control = new AgentControl(files, null);
+        // Sprawdzanie co 200 ms — bez trybu zdarzeń przez 2 s byłoby ~10 sprawdzeń i zapisów stanu.
+        start(new PhoneArchiveOptions(upload, archive, true), files, Duration.ofMillis(200), Duration.ZERO, null);
+        waitFor(() -> control.readStatus().map(AgentStatus::eventDriven).orElse(false));
+        AgentStatus idle = control.readStatus().orElseThrow();
+        assertEquals(null, idle.nextCheck(), "bez kontrolnego sprawdzania");
+        assertTrue(idle.nextCheckText(java.time.format.DateTimeFormatter.ISO_INSTANT).startsWith("przy nowym pliku"));
+        String before = Files.readString(files.status());
+        java.nio.file.attribute.FileTime written = Files.getLastModifiedTime(files.status());
+
+        Thread.sleep(2000);
+        assertEquals(before, Files.readString(files.status()), "stan nie jest zapisywany, gdy nic się nie dzieje");
+        assertEquals(written, Files.getLastModifiedTime(files.status()));
+
+        // Nowy plik budzi agenta i jest archiwizowany.
+        write(upload.resolve("IMG_1.jpg"), "nowy");
+        Path day = archive.resolve(LocalDate.now().format(com.photon.phonearchive.PhoneArchiver.DAY_FORMAT));
+        waitFor(() -> Files.exists(day.resolve("IMG_1.jpg")));
+        waitFor(() -> control.readStatus().map(s -> s.eventDriven() && s.archived() == 1).orElse(false));
+        assertTrue(control.logTail(50).stream().anyMatch(l -> l.contains("Czekam na nowe pliki")));
+    }
+
+    @Test
+    void fileBeingUploadedIsPolledUntilStableThenAgentSleepsAgain() throws Exception {
+        Path upload = Files.createDirectories(dir.resolve("Upload"));
+        Path archive = dir.resolve("Archiwum");
+        AgentFiles files = AgentFiles.in(dir.resolve("backup"));
+        AgentControl control = new AgentControl(files, null);
+        start(new PhoneArchiveOptions(upload, archive, true), files, Duration.ofMillis(200), Duration.ofSeconds(1), null);
+        waitFor(() -> control.readStatus().map(AgentStatus::eventDriven).orElse(false));
+
+        write(upload.resolve("VID_1.mp4"), "początek filmu");
+        // Plik dopiero się pojawił — agent sprawdza go cyklicznie (co 200 ms), aż przez 1 s się nie zmieni.
+        Path day = archive.resolve(LocalDate.now().format(com.photon.phonearchive.PhoneArchiver.DAY_FORMAT));
+        try {
+            waitFor(() -> Files.exists(day.resolve("VID_1.mp4")));
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new AssertionError("stan: " + control.readStatus() + "\ndziennik: " + control.logTail(30), e);
+        }
+        waitFor(() -> control.readStatus().map(s -> s.eventDriven() && s.waiting() == 0).orElse(false));
+        assertTrue(control.logTail(50).stream().anyMatch(l -> l.contains("Plik w trakcie przesyłania")));
+    }
+
+    @Test
+    void statusWriteBlockedByReaderIsRetried() throws Exception {
+        Path upload = Files.createDirectories(dir.resolve("Upload"));
+        Path archive = dir.resolve("Archiwum");
+        AgentFiles files = AgentFiles.in(dir.resolve("backup"));
+        AgentControl control = new AgentControl(files, null);
+        start(new PhoneArchiveOptions(upload, archive, true), files, Duration.ofMillis(200), Duration.ZERO, null);
+        waitFor(() -> control.readStatus().map(AgentStatus::eventDriven).orElse(false));
+
+        Path day = archive.resolve(LocalDate.now().format(com.photon.phonearchive.PhoneArchiver.DAY_FORMAT));
+        // Inny program (np. starsza wersja PhotoN) trzyma plik stanu otwarty przez java.io — w Windows to
+        // blokuje podmianę pliku, więc zapis stanu po archiwizacji się nie uda.
+        try (java.io.FileInputStream reader = new java.io.FileInputStream(files.status().toFile())) {
+            write(upload.resolve("IMG_1.jpg"), "nowy");
+            waitFor(() -> Files.exists(day.resolve("IMG_1.jpg")));
+            Thread.sleep(1500);
+        }
+        // Po zwolnieniu pliku agent ponawia zapis sam — bez nowych plików i bez cyklicznego sprawdzania.
+        waitFor(() -> control.readStatus().map(s -> s.archived() == 1 && !s.checking()).orElse(false));
+    }
+
+    @Test
+    void sessionEndsAfterQuietTimeWithSummaryAndCsv() throws Exception {
+        Path upload = Files.createDirectories(dir.resolve("Upload"));
+        Path archive = dir.resolve("Archiwum");
+        AgentFiles files = AgentFiles.in(dir.resolve("backup"));
+        AgentControl control = new AgentControl(files, null);
+        start(new PhoneArchiveOptions(upload, archive, true), files, Duration.ofMillis(200), Duration.ZERO, null);
+        loop.withSessionEnd(Duration.ofSeconds(2));
+        waitFor(() -> control.readStatus().map(AgentStatus::eventDriven).orElse(false));
+
+        write(upload.resolve("IMG_1.jpg"), "pierwszy");
+        write(upload.resolve("IMG_2.jpg"), "drugi");
+        waitFor(() -> control.readStatus().map(s -> s.session() != null && s.session().archived() == 2).orElse(false));
+        assertTrue(control.readStatus().orElseThrow().sessionText(java.time.format.DateTimeFormatter.ISO_INSTANT)
+                .contains("zarchiwizowano 2 pliki"));
+
+        // 2 s bez nowych plików — koniec sesji: podsumowanie w dzienniku i stanie, lista plików w CSV.
+        waitFor(() -> control.readStatus().map(s -> s.session() == null && s.lastSession() != null).orElse(false));
+        assertTrue(control.readStatus().orElseThrow().lastSession().contains("zarchiwizowano 2 pliki"));
+        assertTrue(control.logTail(20).stream().anyMatch(l -> l.contains("Sesja ") && l.contains("Lista plików")));
+        Path sessions = dir.resolve("backup/sesje");
+        try (var csv = Files.list(sessions)) {
+            Path file = csv.findFirst().orElseThrow();
+            String content = Files.readString(file);
+            assertTrue(content.contains("zarchiwizowano") && content.contains("IMG_1.jpg") && content.contains("IMG_2.jpg"),
+                    content);
+        }
+    }
+
+    @Test
+    void safetyCheckRunsEvenWithoutEvents() throws Exception {
+        Path upload = Files.createDirectories(dir.resolve("Upload"));
+        AgentFiles files = AgentFiles.in(dir.resolve("backup"));
+        AgentControl control = new AgentControl(files, null);
+        start(new PhoneArchiveOptions(upload, dir.resolve("Archiwum"), true), files, Duration.ofMillis(200),
+                Duration.ZERO, Duration.ofMillis(700));
+        waitFor(() -> control.readStatus().map(AgentStatus::eventDriven).orElse(false));
+        AgentStatus first = control.readStatus().orElseThrow();
+        assertTrue(first.nextCheck() != null, "termin kontrolnego sprawdzenia");
+        waitFor(() -> control.readStatus().map(s -> s.lastCheck().isAfter(first.lastCheck())).orElse(false));
+    }
+
+    @Test
+    void settingsFileDefaultsToHourlySafetyCheck() throws IOException {
+        AgentFiles files = AgentFiles.in(dir.resolve("backup"));
+        AgentSettings defaults = AgentSettings.load(files);
+        assertEquals(60, defaults.safetyCheckMinutes());
+        assertEquals(Duration.ofHours(1), defaults.safetyCheck());
+
+        assertEquals(Duration.ofMinutes(2), defaults.quietPeriod(), "domyślnie 2 minuty (wolny internet)");
+        defaults.withSafetyCheckMinutes(0).withQuietSeconds(300).save(files);
+        AgentSettings off = AgentSettings.load(files);
+        assertEquals(null, off.safetyCheck(), "wyłączone");
+        assertEquals(Duration.ofMinutes(5), off.quietPeriod());
+        assertEquals(Duration.ofHours(1), off.slowPolling(), "bez powiadomień i tak co godzinę");
+        assertEquals(Duration.ofMinutes(15), new AgentSettings(15, 30).slowPolling());
+    }
+
     private void start(PhoneArchiveOptions options, AgentFiles files, Duration fast) {
-        loop = new AgentLoop("Test", options, files, null, fast, fast, Duration.ofHours(1), Duration.ZERO,
-                Duration.ofMillis(500), Clock.systemDefaultZone(), null);
+        start(options, files, fast, Duration.ZERO, Duration.ofHours(1));
+    }
+
+    private void start(PhoneArchiveOptions options, AgentFiles files, Duration fast, Duration quiet, Duration safety) {
+        loop = new AgentLoop("Test", options, files, null, fast, fast, Duration.ofHours(1), quiet,
+                Duration.ofMillis(500), Clock.systemDefaultZone(), null).withSafetyCheck(safety);
         thread = new Thread(() -> {
             try {
                 loop.run();
@@ -172,8 +303,16 @@ class AgentLoopTest {
         thread.start();
     }
 
-    private static void waitFor(java.util.concurrent.Callable<Boolean> condition) throws Exception {
-        WaitForAsyncUtils.waitFor(20, TimeUnit.SECONDS, condition);
+    private void waitFor(java.util.concurrent.Callable<Boolean> condition) throws Exception {
+        try {
+            WaitForAsyncUtils.waitFor(20, TimeUnit.SECONDS, condition);
+        } catch (java.util.concurrent.TimeoutException e) {
+            AgentControl control = new AgentControl(AgentFiles.in(dir.resolve("backup")), null);
+            throw new AssertionError("Nie doczekano się warunku. Stan: " + control.readStatus()
+                    + "\nDziennik: " + control.logTail(30) + "\nBłąd wątku: " + failure.get()
+                    + "\nStos agenta:\n" + (thread == null ? "-" : java.util.Arrays.stream(thread.getStackTrace())
+                    .limit(40).map(f -> "  at " + f).collect(java.util.stream.Collectors.joining("\n"))), e);
+        }
     }
 
     private static void write(Path file, String content) throws IOException {

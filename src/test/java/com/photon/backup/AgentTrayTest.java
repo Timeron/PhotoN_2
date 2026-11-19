@@ -85,6 +85,6 @@ class AgentTrayTest {
         return new AgentStatus(AgentStatus.State.RUNNING, 123, profile, Path.of("C:\\Telefon"), Path.of("D:\\Archiwum"),
                 now, now, now, now.plusSeconds(15), 15, false, true, false, archived, 0, 0, 0, 0,
                 List.of(new AgentStatus.PendingDuplicate(Path.of("C:\\Telefon\\a.jpg"), Path.of("D:\\Archiwum\\a.jpg"), 1)),
-                problem, null);
+                problem, null, false, null, null, List.of());
     }
 }

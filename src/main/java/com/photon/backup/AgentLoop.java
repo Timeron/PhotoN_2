@@ -31,9 +31,12 @@ import java.util.concurrent.TimeUnit;
  * Pętla agenta kopii zapasowej (bez interfejsu graficznego). Działa, dopóki nie dostanie polecenia STOP
  * (plik w {@code backup/commands/}) albo {@link #requestStop()} (np. Ctrl+C w konsoli).
  * <ul>
- *   <li>sprawdza folder źródłowy co {@code fast} (15 s), a po {@code idleAfter} (15 min) ciszy co {@code slow} (15 min),</li>
- *   <li>pojawienie się nowego pliku budzi agenta od razu (powiadomienia systemowe, {@link FolderWatcher}),</li>
- *   <li>po każdym sprawdzeniu i co {@code heartbeat} zapisuje stan do {@code backup/status.json},</li>
+ *   <li>gdy działają powiadomienia o nowych plikach ({@link FolderWatcher}) i nic nie czeka — agent śpi do
+ *       powiadomienia, najwyżej z kontrolnym sprawdzeniem co {@code safetyCheck} (dysk może zasnąć),</li>
+ *   <li>gdy plik jest w trakcie przesyłania albo jest problem z dostępem — sprawdza co {@code fast} (15 s),</li>
+ *   <li>bez powiadomień (serwer FTP/SFTP, część dysków sieciowych) — co {@code fast}, a po {@code idleAfter}
+ *       (15 min) ciszy co {@code slow},</li>
+ *   <li>zapisuje stan do {@code backup/status.json} tylko przy zmianach (bez cyklicznych zapisów),</li>
  *   <li>trzyma blokadę {@code backup/agent.lock} — drugi agent się nie uruchomi, a PhotoN wie, że agent żyje.</li>
  * </ul>
  */
@@ -67,6 +70,8 @@ public class AgentLoop {
     private final Duration heartbeat;
     private final Clock clock;
     private final PrintStream console;
+    /** Kontrolne sprawdzenie przy działających powiadomieniach (null = bez kontrolnego sprawdzania). */
+    private Duration safetyCheck = Duration.ofHours(1);
     private final ArchiveWatcher watcher;
     private final CheckPacer pacer;
     private final BlockingQueue<Signal> signals = new LinkedBlockingQueue<>();
@@ -85,6 +90,20 @@ public class AgentLoop {
     private int errors;
     private int waiting;
     private String lastProblem;
+    /** Czy agent czeka na powiadomienie (bez cyklicznego sprawdzania). */
+    private boolean eventDriven;
+    /** Sesja kończy się po takim czasie bez nowych plików (i bez plików w trakcie przesyłania). */
+    static final Duration SESSION_END = Duration.ofMinutes(15);
+    private Duration sessionEnd = SESSION_END;
+    private BackupSession session;
+    private String lastSessionSummary;
+    private List<Path> stalled = List.of();
+    private final Set<Path> reportedStalled = new HashSet<>();
+
+    /** Ostatni zapis stanu się nie udał — ponawiany przy czekaniu (inaczej PhotoN pokazywałby stary stan). */
+    private boolean statusUnsaved;
+    private AgentStatus.State unsavedState;
+    static final Duration STATUS_RETRY = Duration.ofSeconds(1);
 
     /**
      * @param cache   pamięć podręczna sum plików archiwum (null = bez pamięci)
@@ -104,12 +123,27 @@ public class AgentLoop {
         this.pacer = new CheckPacer(fast, slow, idleAfter, clock);
     }
 
-    /** Domyślne tempo: 15 s / 15 min, plik gotowy po 30 s bez zmian, stan zapisywany co 30 s. */
+    /**
+     * Domyślne tempo: 15 s, plik gotowy po 30 s bez zmian; po 15 min ciszy (bez powiadomień) i kontrolnie
+     * (z powiadomieniami) według {@link AgentSettings}.
+     */
     public static AgentLoop withDefaults(String profileName, PhoneArchiveOptions options, AgentFiles files,
-                                         HashCache cache, PrintStream console) {
-        return new AgentLoop(profileName, options, files, cache, CheckPacer.FAST, CheckPacer.SLOW,
-                CheckPacer.IDLE_AFTER, Duration.ofSeconds(30), Duration.ofSeconds(30), Clock.systemDefaultZone(),
-                console);
+                                         HashCache cache, AgentSettings settings, PrintStream console) {
+        return new AgentLoop(profileName, options, files, cache, CheckPacer.FAST, settings.slowPolling(),
+                CheckPacer.IDLE_AFTER, settings.quietPeriod(), Duration.ofSeconds(30), Clock.systemDefaultZone(),
+                console).withSafetyCheck(settings.safetyCheck());
+    }
+
+    /** Po jakim czasie bez aktywności sesja się kończy (testy). */
+    AgentLoop withSessionEnd(Duration duration) {
+        this.sessionEnd = duration;
+        return this;
+    }
+
+    /** Kontrolne sprawdzenie przy działających powiadomieniach (null = wyłączone). */
+    public AgentLoop withSafetyCheck(Duration interval) {
+        this.safetyCheck = interval;
+        return this;
     }
 
     public void setObserver(Observer observer) {
@@ -156,8 +190,10 @@ public class AgentLoop {
         startedAt = clock.instant();
         BackupLog.rotateIfLarge(files.logFile());
         log("Agent uruchomiony (PID " + ProcessHandle.current().pid() + "): profil „" + profileName + "”, "
-                + options.source() + " → " + options.target() + ". Sprawdzanie co " + describe(pacer.fast())
-                + "; gdy przez " + describe(pacer.idleAfter()) + " nic się nie pojawi — co " + describe(pacer.slow()) + ".");
+                + options.source() + " → " + options.target() + ". Nowy plik budzi agenta od razu (powiadomienia "
+                + "Windows), kontrolne sprawdzenie: " + (safetyCheck == null ? "wyłączone" : "co " + describe(safetyCheck))
+                + ". Bez powiadomień — co " + describe(pacer.fast()) + ", a po " + describe(pacer.idleAfter())
+                + " ciszy co " + describe(pacer.slow()) + ".");
         try {
             commandWatcher = new FolderWatcher(files.commands(), false, null, () -> signals.offer(Signal.COMMAND));
         } catch (IOException e) {
@@ -186,6 +222,9 @@ public class AgentLoop {
                     System.err.println("Nie udało się zapisać pamięci podręcznej: " + e.getMessage());
                 }
             }
+            if (session != null) {
+                endSession(); // podsumowanie także przy zatrzymaniu w trakcie sesji
+            }
             log("Agent zatrzymany.");
             writeStatus(AgentStatus.State.STOPPED);
         }
@@ -206,7 +245,7 @@ public class AgentLoop {
             return;
         } catch (RuntimeException e) {
             report = new ArchiveWatcher.CycleReport(clock.instant(), null, null, List.of(),
-                    "Nieoczekiwany błąd: " + e.getMessage(), 0);
+                    "Nieoczekiwany błąd: " + e.getMessage(), 0, List.of());
         }
         checking = false;
         lastCheck = report.at();
@@ -235,37 +274,77 @@ public class AgentLoop {
             }
         }
 
+        trackSession(report);
+        trackStalled(report);
+
         Duration next = pacer.afterCycle(report.activity());
-        if (pacer.lastChange() == CheckPacer.Change.SLOWED_DOWN) {
-            log("Brak nowych plików od " + describe(pacer.idleAfter()) + " — sprawdzanie co " + describe(pacer.slow())
-                    + (sourceWatcher != null && sourceWatcher.isActive() ? " (nowe pliki i tak budzą agenta od razu)." : "."));
-        } else if (pacer.lastChange() == CheckPacer.Change.SPED_UP) {
-            log("Pojawiły się nowe pliki — sprawdzanie znowu co " + describe(pacer.fast()) + ".");
+        // Działają powiadomienia, nic nie czeka na zakończenie przesyłania i nie ma problemu z dostępem:
+        // agent śpi do powiadomienia (dysk może zasnąć), najwyżej z kontrolnym sprawdzeniem.
+        boolean idleWithEvents = sourceWatcher != null && sourceWatcher.isActive()
+                && report.problem() == null && report.waiting() == 0;
+        if (idleWithEvents) {
+            if (!eventDriven) {
+                log("Czekam na nowe pliki (powiadomienia Windows)" + (safetyCheck == null
+                        ? ", bez kontrolnego sprawdzania." : "; kontrolnie co " + describe(safetyCheck) + "."));
+            }
+            deadline = safetyCheck == null ? null : clock.instant().plus(safetyCheck);
+        } else {
+            if (eventDriven && report.waiting() > 0) {
+                log("Plik w trakcie przesyłania — sprawdzanie co " + describe(next) + ", aż się prześle.");
+            } else if (!eventDriven && pacer.lastChange() == CheckPacer.Change.SLOWED_DOWN) {
+                log("Brak nowych plików od " + describe(pacer.idleAfter()) + " — sprawdzanie co " + describe(pacer.slow()) + ".");
+            } else if (!eventDriven && pacer.lastChange() == CheckPacer.Change.SPED_UP) {
+                log("Pojawiły się nowe pliki — sprawdzanie znowu co " + describe(pacer.fast()) + ".");
+            }
+            deadline = clock.instant().plus(next);
         }
-        deadline = clock.instant().plus(next);
+        eventDriven = idleWithEvents;
+        // Trwająca sesja kończy się po czasie bez aktywności — potrzebne jest wtedy jeszcze jedno sprawdzenie.
+        if (session != null) {
+            Instant end = session.endsAt(sessionEnd);
+            if (deadline == null || end.isBefore(deadline)) {
+                deadline = end.isAfter(clock.instant()) ? end : clock.instant().plus(pacer.fast());
+            }
+        }
         writeStatus(AgentStatus.State.RUNNING);
     }
 
-    /** Czeka do następnego sprawdzenia; budzą je polecenia i (przy dłuższym czekaniu) nowe pliki. */
+    /**
+     * Czeka do następnego sprawdzenia (albo — bez terminu — do powiadomienia). Budzą je polecenia i nowe pliki.
+     * Nie zapisuje niczego na dysk, dopóki nic się nie dzieje (dyski mogą zasnąć).
+     */
     private void waitForNextCheck() {
         while (!stopRequested) {
-            Instant now = clock.instant();
-            Duration remaining = Duration.between(now, deadline);
-            if (remaining.isNegative() || remaining.isZero()) {
-                return;
+            Duration wait = null;
+            if (deadline != null) {
+                wait = Duration.between(clock.instant(), deadline);
+                if (wait.isNegative() || wait.isZero()) {
+                    return;
+                }
             }
-            Duration wait = remaining.compareTo(heartbeat) < 0 ? remaining : heartbeat;
+            // Bez powiadomień o poleceniach trzeba co jakiś czas zajrzeć do folderu poleceń.
+            boolean pollCommands = commandWatcher == null || !commandWatcher.isActive();
+            if (pollCommands && (wait == null || wait.compareTo(heartbeat) > 0)) {
+                wait = heartbeat;
+            }
+            if (statusUnsaved && (wait == null || wait.compareTo(STATUS_RETRY) > 0)) {
+                wait = STATUS_RETRY;
+            }
             Signal signal;
             try {
-                signal = signals.poll(Math.max(1, wait.toMillis()), TimeUnit.MILLISECONDS);
+                signal = wait == null ? signals.take() : signals.poll(Math.max(1, wait.toMillis()), TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 stopRequested = true;
                 return;
             }
             if (signal == null) {
-                processCommands(); // na wypadek, gdyby powiadomienie o poleceniu nie dotarło
-                writeStatus(AgentStatus.State.RUNNING);
+                if (pollCommands) {
+                    processCommands();
+                }
+                if (statusUnsaved) {
+                    writeStatus(unsavedState);
+                }
                 continue;
             }
             switch (signal) {
@@ -276,14 +355,88 @@ public class AgentLoop {
                     deadline = clock.instant();
                 }
                 case FILE -> {
-                    // Nowy plik: sprawdzamy za chwilę (zbieramy serię plików), nie czekając na pełny odstęp.
+                    // Nowy plik (albo koniec obserwacji folderu): sprawdzamy za chwilę — seria plików w jednym
+                    // sprawdzeniu — nie czekając na pełny odstęp.
                     Instant soon = clock.instant().plus(EVENT_DEBOUNCE);
-                    if (deadline.isAfter(soon)) {
+                    if (deadline == null || deadline.isAfter(soon)) {
                         deadline = soon;
-                        writeStatus(AgentStatus.State.RUNNING);
                     }
                 }
                 default -> { }
+            }
+        }
+    }
+
+    // =====================================================================
+    // Sesja i wstrzymane przesyłanie
+    // =====================================================================
+
+    private void trackSession(ArchiveWatcher.CycleReport report) {
+        Instant now = clock.instant();
+        if (report.summary() == null) {
+            return; // przebieg pominięty (problem) — sesja trwa dalej
+        }
+        if (session == null && (report.activity() || report.waiting() > report.stalled().size())) {
+            session = new BackupSession(now);
+            log("Początek sesji — pojawiły się nowe pliki.");
+        }
+        if (session == null) {
+            return;
+        }
+        session.add(report, now);
+        // Pliki, których przesyłanie stoi, nie przedłużają sesji w nieskończoność.
+        if (session.finished(now, sessionEnd, report.waiting() - report.stalled().size())) {
+            endSession();
+        }
+    }
+
+    private void endSession() {
+        String summary = session.summary();
+        String csvInfo = "";
+        try {
+            Path csv = session.writeCsv(files.logFile().toAbsolutePath().getParent().resolve("sesje"));
+            csvInfo = " Lista plików: " + csv;
+        } catch (IOException e) {
+            csvInfo = " (nie udało się zapisać listy plików: " + e.getMessage() + ")";
+        }
+        log(summary + csvInfo);
+        lastSessionSummary = summary;
+        session = null;
+        Observer current = observer;
+        if (current != null) {
+            try {
+                current.notify("PhotoN — sesja zakończona", summary, false);
+            } catch (RuntimeException e) {
+                System.err.println("Błąd powiadomienia: " + e.getMessage());
+            }
+        }
+    }
+
+    /** Zgłasza (raz) pliki, których przesyłanie stoi — np. telefon przerwał wysyłanie. */
+    private void trackStalled(ArchiveWatcher.CycleReport report) {
+        if (report.summary() == null) {
+            return;
+        }
+        stalled = report.stalled();
+        List<Path> fresh = stalled.stream().filter(f -> !reportedStalled.contains(f)).toList();
+        reportedStalled.retainAll(stalled);
+        if (fresh.isEmpty()) {
+            return;
+        }
+        reportedStalled.addAll(fresh);
+        String text = "Przesyłanie stoi od ponad " + describe(ArchiveWatcher.STALL_AFTER) + ": "
+                + Texts.count(fresh.size(), "plik", "pliki", "plików") + " niekompletne albo puste ("
+                + fresh.stream().limit(5).map(p -> String.valueOf(p.getFileName()))
+                .collect(java.util.stream.Collectors.joining(", "))
+                + (fresh.size() > 5 ? ", …" : "") + "). Wyślij je z telefonu ponownie — zostają w folderze "
+                + "archiwizowanym i trafią do archiwum, gdy będą kompletne.";
+        log(text);
+        Observer current = observer;
+        if (current != null) {
+            try {
+                current.notify("PhotoN — przesyłanie stoi", text, true);
+            } catch (RuntimeException e) {
+                System.err.println("Błąd powiadomienia: " + e.getMessage());
             }
         }
     }
@@ -408,12 +561,16 @@ public class AgentLoop {
                 .map(d -> new AgentStatus.PendingDuplicate(d.source(), d.existing(), d.size())).toList();
         Instant now = clock.instant();
         boolean running = state == AgentStatus.State.RUNNING;
+        boolean waitingForEvents = running && eventDriven && !checking;
+        long interval = waitingForEvents ? (safetyCheck == null ? 0 : safetyCheck.toSeconds())
+                : pacer.currentInterval().toSeconds();
         AgentStatus status = new AgentStatus(state, ProcessHandle.current().pid(), profileName, options.source(),
                 options.target(), startedAt, now, lastCheck, running ? deadline : null,
-                pacer.currentInterval().toSeconds(), pacer.isSlow(),
+                interval, !waitingForEvents && pacer.isSlow(),
                 running && sourceWatcher != null && sourceWatcher.isActive(), running && checking,
                 archived, thumbnails, movedDuplicates, errors, waiting, pending, lastProblem,
-                running ? null : now);
+                running ? null : now, waitingForEvents,
+                session == null ? null : session.snapshot(waiting), lastSessionSummary, stalled);
         Observer current = observer;
         if (current != null) {
             try {
@@ -422,20 +579,24 @@ public class AgentLoop {
                 System.err.println("Błąd ikony w zasobniku: " + e.getMessage());
             }
         }
-        for (int attempt = 0; attempt < 3; attempt++) {
+        for (int attempt = 0; attempt < 5; attempt++) {
             try {
                 Json.writeAtomically(files.status(), status);
+                statusUnsaved = false;
                 return;
             } catch (IOException e) {
                 // PhotoN mógł akurat czytać plik — ponawiamy za chwilę
                 try {
-                    Thread.sleep(50);
+                    Thread.sleep(50L * (attempt + 1));
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    return;
+                    break;
                 }
             }
         }
+        // Nie udało się — spróbujemy ponownie przy czekaniu (stan nie jest już zapisywany cyklicznie).
+        statusUnsaved = true;
+        unsavedState = state;
     }
 
     /** Powiadomienie tylko o tym, co warte uwagi: zarchiwizowane pliki, nowe duplikaty do decyzji, błędy. */
@@ -510,6 +671,9 @@ public class AgentLoop {
         }
         if (report.waiting() > 0) {
             parts.add("w trakcie przesyłania: " + report.waiting());
+        }
+        if (report.summary() != null && !report.summary().incomplete().isEmpty()) {
+            parts.add("niekompletne (czekają): " + report.summary().incomplete().size());
         }
         if (!report.errors().isEmpty()) {
             parts.add("błędy: " + report.errors().size());

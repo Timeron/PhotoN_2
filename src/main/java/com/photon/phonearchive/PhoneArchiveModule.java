@@ -123,6 +123,9 @@ public class PhoneArchiveModule extends StackPane {
             Throwable error = task.getException();
             if (error instanceof PhoneArchiver.CancelledException) {
                 form.showStatus("Archiwizacja została przerwana. Przeniesione pliki pozostały w archiwum.", false);
+            } else if (error instanceof PhoneArchiver.InsufficientSpaceException) {
+                form.showStatus("Archiwizacja przerwana — za mało miejsca na dysku.", true);
+                Dialogs.error(window(), "Za mało miejsca", error.getMessage());
             } else if (error instanceof PhoneArchiver.ArchiveUnavailableException) {
                 form.showStatus("Archiwizacja przerwana — archiwum jest niedostępne.", true);
                 Dialogs.error(window(), "Archiwum niedostępne", error.getMessage()
@@ -192,6 +195,10 @@ public class PhoneArchiveModule extends StackPane {
         }
         if (!summary.duplicates().isEmpty()) {
             text.append(" Już w archiwum: ").append(summary.duplicates().size()).append(".");
+        }
+        if (!summary.incomplete().isEmpty()) {
+            text.append(" Pominięto niekompletne pliki: ").append(summary.incomplete().size())
+                    .append(" (przesyłanie trwa albo zostało przerwane — zostały w folderze archiwizowanym).");
         }
         if (!summary.errors().isEmpty()) {
             text.append(" Błędy: ").append(summary.errors().size()).append(".");

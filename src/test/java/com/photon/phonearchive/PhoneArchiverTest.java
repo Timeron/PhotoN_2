@@ -435,6 +435,44 @@ class PhoneArchiverTest {
         assertFalse(Files.exists(archive), "archiwum nie zostało odtworzone");
     }
 
+    @Test
+    void truncatedFilesStayInSource() throws Exception {
+        Path phone = dir.resolve("Telefon");
+        Path archive = dir.resolve("Archiwum");
+        Path full = dir.resolve("pelne.jpg");
+        ThumbnailMakerTest.writePhoto(full, 400, 300, true);
+        byte[] jpeg = Files.readAllBytes(full);
+        Files.createDirectories(phone);
+        Files.write(phone.resolve("IMG_ok.jpg"), jpeg);
+        Files.write(phone.resolve("IMG_cut.jpg"), java.util.Arrays.copyOf(jpeg, jpeg.length - 100));
+        byte[] mp4 = MediaIntegrityTest.mp4(5000);
+        Files.write(phone.resolve("VID_ok.mp4"), mp4);
+        Files.write(phone.resolve("VID_cut.mp4"), java.util.Arrays.copyOf(mp4, 3000));
+
+        PhoneArchiver.Summary summary = run(phone, archive, true);
+
+        assertEquals(2, summary.moved().size(), summary.toString());
+        assertEquals(List.of(phone.resolve("IMG_cut.jpg"), phone.resolve("VID_cut.mp4")), summary.incomplete());
+        assertTrue(Files.exists(phone.resolve("IMG_cut.jpg")), "niekompletny zostaje w źródle");
+        assertTrue(Files.exists(phone.resolve("VID_cut.mp4")));
+        assertTrue(PhoneArchiveModule.summaryText(summary).contains("Pominięto niekompletne pliki: 2"));
+    }
+
+    @Test
+    void stopsWhenThumbnailDiskIsFull() throws Exception {
+        Path phone = dir.resolve("Telefon");
+        ThumbnailMakerTest.writePhoto(phone.resolve("IMG_1.jpg"), 400, 300, true);
+        ThumbnailMakerTest.writePhoto(phone.resolve("IMG_2.jpg"), 400, 300, true);
+        Path archive = dir.resolve("Archiwum");
+        PhoneArchiveOptions options = new PhoneArchiveOptions(phone, archive, true, true, 100,
+                dir.resolve("Miniatury"), PhoneDuplicateAction.REMOVE, null);
+        PhoneArchiver.InsufficientSpaceException error = assertThrows(PhoneArchiver.InsufficientSpaceException.class,
+                () -> new PhoneArchiver(options, TODAY, null).withMinFreeBytes(Long.MAX_VALUE / 2)
+                        .run((m, d, t) -> { }, () -> false));
+        assertTrue(error.getMessage().startsWith("Za mało miejsca na dysku miniatur"), error.getMessage());
+        assertTrue(Files.exists(phone.resolve("IMG_2.jpg")), "dalsze pliki zostają w źródle");
+    }
+
     private static PhoneArchiver.Summary run(Path phone, Path archive, boolean subfolders) {
         return new PhoneArchiver(new PhoneArchiveOptions(phone, archive, subfolders), TODAY, null)
                 .run((message, done, total) -> { }, () -> false);

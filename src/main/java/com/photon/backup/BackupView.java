@@ -75,6 +75,10 @@ public class BackupView extends BorderPane {
     private final Label problemLabel = new Label();
     private final ListView<String> log = new ListView<>();
     private final Label feedback = new Label();
+    private final ComboBox<Integer> safetyCheck = new ComboBox<>();
+    private final ComboBox<Integer> quietPeriod = new ComboBox<>();
+    private final Label sessionLabel = new Label("—");
+    private final Label stalledLabel = new Label();
     private final Button startButton = new Button();
     private final Button checkNowButton = new Button("Sprawdź teraz", new FontIcon(MaterialDesignR.REFRESH));
     private final Button removeDuplicatesButton = new Button();
@@ -260,9 +264,70 @@ public class BackupView extends BorderPane {
         Label agent = infoBanner("Archiwizację w tle wykonuje osobny, lekki program (agent) — działa także po "
                 + "zamknięciu PhotoN. Tutaj go uruchamiasz, zatrzymujesz i podglądasz. Można go też uruchomić "
                 + "z konsoli: photon-backup.bat --profile \"NAZWA\" (oraz --status, --stop, --list).");
-        Label pace = infoBanner("Agent sprawdza folder co 15 sekund, a po 15 minutach bez nowych plików co 15 minut. "
-                + "Nowy plik budzi go od razu (powiadomienia systemowe). Pliki w trakcie przesyłania czekają, aż przez "
-                + "30 sekund nie zmienią rozmiaru ani daty i żaden program nie będzie ich zapisywał.");
+        safetyCheck.getItems().setAll(AgentSettings.CHOICES);
+        safetyCheck.setMaxWidth(Double.MAX_VALUE);
+        safetyCheck.setConverter(new javafx.util.StringConverter<>() {
+            @Override
+            public String toString(Integer minutes) {
+                return minutes == null ? "" : AgentSettings.label(minutes);
+            }
+
+            @Override
+            public Integer fromString(String text) {
+                return null;
+            }
+        });
+        safetyCheck.setValue(AgentSettings.load(control.files()).safetyCheckMinutes());
+        safetyCheck.valueProperty().addListener((obs, old, minutes) -> {
+            if (minutes == null || minutes.equals(old)) {
+                return;
+            }
+            try {
+                AgentSettings.load(control.files()).withSafetyCheckMinutes(minutes).save(control.files());
+                showStatus(control.isRunning()
+                        ? "Zapisano. Nowy odstęp zacznie obowiązywać po ponownym uruchomieniu agenta."
+                        : "Zapisano odstęp kontrolnego sprawdzania.", false);
+            } catch (java.io.IOException e) {
+                showStatus("Nie udało się zapisać ustawienia: " + e.getMessage(), true);
+            }
+        });
+        grid.addRow(1, fieldLabel("Sprawdzanie kontrolne"), safetyCheck);
+
+        quietPeriod.getItems().setAll(AgentSettings.QUIET_CHOICES);
+        quietPeriod.setMaxWidth(Double.MAX_VALUE);
+        quietPeriod.setConverter(new javafx.util.StringConverter<>() {
+            @Override
+            public String toString(Integer seconds) {
+                return seconds == null ? "" : AgentSettings.quietLabel(seconds);
+            }
+
+            @Override
+            public Integer fromString(String text) {
+                return null;
+            }
+        });
+        quietPeriod.setValue(AgentSettings.load(control.files()).quietSeconds());
+        quietPeriod.valueProperty().addListener((obs, old, seconds) -> {
+            if (seconds == null || seconds.equals(old)) {
+                return;
+            }
+            try {
+                AgentSettings.load(control.files()).withQuietSeconds(seconds).save(control.files());
+                showStatus(control.isRunning()
+                        ? "Zapisano. Nowy czas zacznie obowiązywać po ponownym uruchomieniu agenta."
+                        : "Zapisano czas oczekiwania na koniec przesyłania.", false);
+            } catch (java.io.IOException e) {
+                showStatus("Nie udało się zapisać ustawienia: " + e.getMessage(), true);
+            }
+        });
+        grid.addRow(2, fieldLabel("Plik przesłany, gdy bez zmian przez"), quietPeriod);
+
+        Label pace = infoBanner("Nowy plik budzi agenta od razu (powiadomienia Windows). Gdy nic się nie dzieje, agent "
+                + "śpi i nie dotyka dysków (mogą zasnąć) — najwyżej sprawdza folder kontrolnie, w odstępie wybranym "
+                + "powyżej, na wypadek zgubionego powiadomienia. Pliki w trakcie przesyłania sprawdza co 15 sekund, aż "
+                + "przez wybrany czas nie zmienią rozmiaru ani daty i będą kompletne (zdjęcia i filmy są sprawdzane, "
+                + "czy nie są ucięte — przerwane przesyłanie nie trafi do archiwum). Folder na serwerze FTP/SFTP "
+                + "i dyski sieciowe bez powiadomień: co 15 sekund, a po 15 minutach ciszy w odstępie kontrolnym.");
         Label rules = infoBanner("Archiwizacja działa jak w zakładce „Archiwizacja telefonu”: nowe zdjęcia i filmy "
                 + "trafiają do folderu z dzisiejszą datą, a miniatury są tworzone zgodnie z profilem. Duplikaty trafiają "
                 + "do śmietnika, jeśli profil tak każe; jeśli profil każe je usuwać — czekają na Twoje potwierdzenie.");
@@ -288,8 +353,15 @@ public class BackupView extends BorderPane {
         grid.addRow(3, fieldLabel("Następne sprawdzenie"), nextCheckLabel);
         grid.addRow(4, fieldLabel("Powiadomienia"), notificationsLabel);
         grid.addRow(5, fieldLabel("Od uruchomienia"), totalsLabel);
+        sessionLabel.setWrapText(true);
+        grid.addRow(6, fieldLabel("Sesja"), sessionLabel);
+        stalledLabel.getStyleClass().add("warning-banner");
+        stalledLabel.setWrapText(true);
+        stalledLabel.setMaxWidth(Double.MAX_VALUE);
+        stalledLabel.managedProperty().bind(stalledLabel.textProperty().isNotEmpty());
+        stalledLabel.visibleProperty().bind(stalledLabel.managedProperty());
         return new FormSection(MaterialDesignT.TIMER_OUTLINE, "Stan agenta",
-                "Odświeżany co sekundę, gdy ta zakładka jest otwarta.", grid, problemLabel);
+                "Odświeżany co sekundę, gdy ta zakładka jest otwarta.", grid, problemLabel, stalledLabel);
     }
 
     private Node buildLogSection() {
@@ -346,10 +418,13 @@ public class BackupView extends BorderPane {
         boolean live = running && s != null;
         sinceLabel.setText(live && s.startedAt() != null ? DATE_TIME.format(s.startedAt()) : "—");
         lastCheckLabel.setText(s != null && s.lastCheck() != null ? TIME.format(s.lastCheck()) : "—");
-        nextCheckLabel.setText(live && s.nextCheck() != null
-                ? TIME.format(s.nextCheck()) + "  (co " + AgentLoop.describe(java.time.Duration.ofSeconds(s.intervalSeconds()))
-                + (s.slowMode() ? " — brak nowych plików od 15 minut" : "") + ")"
-                : "—");
+        nextCheckLabel.setText(live ? s.nextCheckText(TIME) : "—");
+        sessionLabel.setText(s == null ? "—" : live || s.session() == null ? s.sessionText(TIME)
+                : s.lastSession() == null ? "—" : "ostatnia: " + s.lastSession());
+        stalledLabel.setText(!live || s.stalled().isEmpty() ? "" : "Przesyłanie stoi od ponad 15 minut ("
+                + s.stalled().size() + "): " + s.stalled().stream().limit(8).map(p -> String.valueOf(p.getFileName()))
+                .collect(java.util.stream.Collectors.joining(", ")) + (s.stalled().size() > 8 ? ", …" : "")
+                + ". Pliki są niekompletne — wyślij je z telefonu ponownie; zostają w folderze archiwizowanym.");
         notificationsLabel.setText(!live ? "—" : s.notifications()
                 ? "aktywne — nowy plik budzi agenta od razu"
                 : "niedostępne — tylko sprawdzanie cykliczne");

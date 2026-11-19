@@ -40,9 +40,15 @@ public class ArchiveWatcher {
      * @param newDuplicates   nowe duplikaty czekające na decyzję o usunięciu
      * @param problem         powód pominięcia przebiegu (np. niedostępny folder) albo null
      * @param changedFiles    pliki nowe lub zmienione od poprzedniego przebiegu (np. trwa przesyłanie)
+     * @param stalled         pliki czekające bez żadnej zmiany od {@link #STALL_AFTER} (przesyłanie stoi)
      */
     public record CycleReport(Instant at, PhoneArchiver.Summary summary, PhoneArchiver.RemovalOutcome movedDuplicates,
-                              List<PhoneArchiver.Duplicate> newDuplicates, String problem, int changedFiles) {
+                              List<PhoneArchiver.Duplicate> newDuplicates, String problem, int changedFiles,
+                              List<Path> stalled) {
+
+        public CycleReport {
+            stalled = stalled == null ? List.of() : List.copyOf(stalled);
+        }
 
         public int archived() {
             return summary == null ? 0 : summary.moved().size() + summary.copied().size();
@@ -92,6 +98,8 @@ public class ArchiveWatcher {
     /** Spis archiwum pamiętany między przebiegami; pełne odświeżenie najpóźniej co {@link #INDEX_MAX_AGE}. */
     private final ArchiveIndex index;
     public static final Duration INDEX_MAX_AGE = Duration.ofMinutes(15);
+    /** Po takim czasie bez zmian czekający plik jest zgłaszany jako „przesyłanie stoi”. */
+    public static final Duration STALL_AFTER = Duration.ofMinutes(15);
     /** Duplikaty czekające na decyzję — osobna blokada, by okno nie czekało na trwający przebieg. */
     private final Map<Path, PhoneArchiver.Duplicate> pending = new LinkedHashMap<>();
     private final Object pendingLock = new Object();
@@ -134,10 +142,10 @@ public class ArchiveWatcher {
         Instant at = clock.instant();
         String problem = options.validate();
         if (problem != null) {
-            return new CycleReport(at, null, null, List.of(), problem, 0);
+            return new CycleReport(at, null, null, List.of(), problem, 0, List.of());
         }
         gate.startCycle();
-        PhoneArchiver.Summary summary;
+        PhoneArchiver.Summary summary = null;
         int changed;
         try {
             summary = new PhoneArchiver(options, LocalDate.ofInstant(at, clock.getZone()), cache)
@@ -150,11 +158,20 @@ public class ArchiveWatcher {
             index.invalidate();
             saveCache();
             return new CycleReport(at, null, null, List.of(),
-                    e.getMessage() + " Pliki zostały w folderze archiwizowanym.", 0);
+                    e.getMessage() + (e instanceof PhoneArchiver.InsufficientSpaceException ? ""
+                            : " Pliki zostały w folderze archiwizowanym."), 0, List.of());
         } finally {
             changed = gate.changesThisCycle();
-            gate.endCycle();
+            if (summary == null) {
+                gate.endCycle(); // przebieg przerwany (wyjątek) — po udanym kończymy niżej, po policzeniu wstrzymanych
+            }
         }
+        // Przesyłanie stoi: plik czeka (niekompletny, pusty, zablokowany) i od dawna się nie zmienia.
+        java.util.Set<Path> waitingFiles = new java.util.TreeSet<>(gate.waitedThisCycle());
+        waitingFiles.addAll(summary.incomplete());
+        List<Path> stalled = waitingFiles.stream()
+                .filter(f -> gate.unchangedFor(f).compareTo(STALL_AFTER) >= 0).toList();
+        gate.endCycle();
         if (summary.dateFolders() > 0) {
             seenDateFolders = true;
         }
@@ -177,7 +194,7 @@ public class ArchiveWatcher {
         }
         pendingDuplicates();
         saveCache();
-        return new CycleReport(at, summary, moved, List.copyOf(fresh), null, changed);
+        return new CycleReport(at, summary, moved, List.copyOf(fresh), null, changed, stalled);
     }
 
     private void saveCache() {

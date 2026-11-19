@@ -38,4 +38,9 @@ public record AgentFiles(Path dir, Path logFile, Path consoleFile) {
     public Path commands() {
         return dir.resolve("commands");
     }
+
+    /** Ustawienia agenta ({@link AgentSettings}). */
+    public Path settings() {
+        return dir.resolve("agent-settings.json");
+    }
 }

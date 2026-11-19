@@ -28,6 +28,9 @@ import java.util.concurrent.TimeUnit;
  */
 public final class BackupAgent {
 
+    private static final java.time.format.DateTimeFormatter TIME =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(java.time.ZoneId.systemDefault());
+
     public static final int EXIT_OK = 0;
     public static final int EXIT_ERROR = 1;
     public static final int EXIT_ALREADY_RUNNING = 2;
@@ -83,7 +86,7 @@ public final class BackupAgent {
                 .load();
         // Dziennik na konsolę tylko wtedy, gdy agent działa w oknie konsoli (z PhotoN — bez konsoli).
         AgentLoop loop = AgentLoop.withDefaults(profileName, profile.get().options(), files, cache,
-                System.console() != null ? out : null);
+                AgentSettings.load(files), System.console() != null ? out : null);
 
         // Ikona w zasobniku systemowym (obok zegara) — gdy system ją obsługuje.
         Optional<AgentTray> tray = AgentTray.install(loop, settings.notifyOnFinish());
@@ -127,8 +130,12 @@ public final class BackupAgent {
             out.println("Profil: " + s.profile() + "  (" + s.source() + " → " + s.target() + ")");
             if (running) {
                 out.println("PID: " + s.pid() + ", od: " + s.startedAt());
-                out.println("Ostatnie sprawdzenie: " + s.lastCheck() + ", następne: " + s.nextCheck()
-                        + " (co " + s.intervalSeconds() + " s" + (s.notifications() ? ", z powiadomieniami" : "") + ")");
+                out.println("Ostatnie sprawdzenie: " + (s.lastCheck() == null ? "—" : TIME.format(s.lastCheck()))
+                        + ", następne: " + s.nextCheckText(TIME));
+                out.println("Sesja: " + s.sessionText(TIME));
+                if (!s.stalled().isEmpty()) {
+                    out.println("Przesyłanie stoi (" + s.stalled().size() + "): " + s.stalled());
+                }
             } else if (s.stoppedAt() != null) {
                 out.println("Zatrzymany: " + s.stoppedAt());
             }

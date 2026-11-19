@@ -34,6 +34,7 @@ public class FolderWatcher implements Closeable {
     private final Map<WatchKey, Path> keys = new ConcurrentHashMap<>();
     private final Thread thread;
     private volatile boolean active = true;
+    private volatile boolean closed;
 
     /**
      * @param excluded folder pomijany (np. archiwum leżące wewnątrz folderu źródłowego) albo null
@@ -125,12 +126,17 @@ public class FolderWatcher implements Closeable {
         } catch (ClosedWatchServiceException e) {
             // zamknięty
         } finally {
+            boolean wasActive = active;
             active = false;
+            if (wasActive && !closed) {
+                onEvent.run(); // obserwacja przestała działać — agent musi się o tym dowiedzieć (inaczej czekałby bez końca)
+            }
         }
     }
 
     @Override
     public void close() {
+        closed = true;
         active = false;
         try {
             service.close();

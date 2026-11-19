@@ -65,6 +65,16 @@ public class PhoneArchiver {
         }
     }
 
+    /** Za mało miejsca na dysku archiwum (albo miniatur) — przebieg przerwany, pliki zostały w źródle. */
+    public static class InsufficientSpaceException extends ArchiveUnavailableException {
+        public InsufficientSpaceException(String message) {
+            super(message);
+        }
+    }
+
+    /** Ile miejsca musi zostać wolne na dysku archiwum i miniatur po przeniesieniu pliku. */
+    public static final long MIN_FREE_BYTES = 1024L * 1024 * 1024;
+
     /** Plik źródłowy, który już jest w archiwum. */
     public record Duplicate(Path source, Path existing, long size) {
     }
@@ -77,10 +87,12 @@ public class PhoneArchiver {
      * @param archivedBytes  łączny rozmiar przeniesionych i skopiowanych plików
      * @param dayFolder      folder z dzisiejszą datą
      * @param thumbnails     miniatury (gdy włączone)
+     * @param waiting        pliki, które czekają (w trakcie przesyłania albo niekompletne)
+     * @param incomplete     pliki niekompletne wg budowy pliku ({@link MediaIntegrity}) — zostały w źródle
      */
     public record Summary(List<Path> moved, List<Path> copied, List<Duplicate> duplicates, int dateFolders,
                           List<String> errors, long archivedBytes, Path dayFolder, Duration elapsed,
-                          ThumbnailStats thumbnails, int waiting) {
+                          ThumbnailStats thumbnails, int waiting, List<Path> incomplete) {
     }
 
     /** Decyzja, czy plik źródłowy można teraz archiwizować. */
@@ -128,6 +140,7 @@ public class PhoneArchiver {
     private FileGate gate = file -> FileState.READY;
     private ArchiveIndex archiveIndex;
     private boolean expectDateFolders;
+    private long minFreeBytes = MIN_FREE_BYTES;
 
     /** @param cache pamięć podręczna sum plików archiwum (null = bez pamięci) */
     public PhoneArchiver(PhoneArchiveOptions options, LocalDate today, HashCache cache) {
@@ -148,6 +161,12 @@ public class PhoneArchiver {
      */
     public PhoneArchiver expectingDateFolders(boolean expect) {
         this.expectDateFolders = expect;
+        return this;
+    }
+
+    /** Ile miejsca musi zostać wolne na dysku archiwum i miniatur (domyślnie {@link #MIN_FREE_BYTES}). */
+    public PhoneArchiver withMinFreeBytes(long bytes) {
+        this.minFreeBytes = bytes;
         return this;
     }
 
@@ -268,7 +287,7 @@ public class PhoneArchiver {
             // Nic do archiwizacji — archiwum jest tylko pobieżnie sprawdzane (najczęstszy przypadek w tle).
             return new Summary(List.of(), List.of(), List.of(), dateFolders(target).size(), List.copyOf(errors), 0, dayFolder,
                     Duration.ofNanos(System.nanoTime() - start),
-                    thumbFolder == null ? ThumbnailStats.NONE : new ThumbnailStats(0, 0, 0, thumbFolder), 0);
+                    thumbFolder == null ? ThumbnailStats.NONE : new ThumbnailStats(0, 0, 0, thumbFolder), 0, List.of());
         }
         progress.update("Sprawdzanie archiwum…", -1, 1);
         boolean newArchive = !Files.isDirectory(target);
@@ -293,6 +312,9 @@ public class PhoneArchiver {
 
         List<Path> moved = new ArrayList<>();
         List<Path> copied = new ArrayList<>();
+        List<Path> incomplete = new ArrayList<>();
+        SpaceCheck archiveSpace = new SpaceCheck(target, "archiwum", minFreeBytes);
+        SpaceCheck thumbSpace = thumbFolder == null ? null : new SpaceCheck(thumbFolder, "miniatur", minFreeBytes);
         List<Duplicate> duplicates = new ArrayList<>();
         long archivedBytes = 0;
         int total = media.size();
@@ -309,11 +331,20 @@ public class PhoneArchiver {
                 if (state == FileState.IGNORE) {
                     continue;
                 }
+                // Przestał rosnąć, ale czy jest cały? Przerwane przesyłanie zostawia ucięty plik.
+                if (MediaIntegrity.check(file) == MediaIntegrity.Result.INCOMPLETE) {
+                    waiting++;
+                    incomplete.add(file);
+                    continue;
+                }
                 long size = Files.size(file);
                 Path existing = findInArchive(file, size, index);
                 if (existing != null) {
                     duplicates.add(new Duplicate(file, existing, size));
                     continue;
+                }
+                if (!Locations.sameServer(file, target) && !sameStore(file, target)) {
+                    archiveSpace.require(size); // przeniesienie między dyskami — potrzebne miejsce
                 }
                 ensureDayFolder(target, dayFolder, newArchive);
                 Path destination = uniqueName(dayFolder.resolve(file.getFileName().toString()));
@@ -336,6 +367,7 @@ public class PhoneArchiver {
                         } else {
                             progress.update("Miniatura: " + (i + 1) + " z " + total + "  •  "
                                     + destination.getFileName(), i, total);
+                            thumbSpace.require(0);
                             try {
                                 ThumbnailMaker.make(destination, thumbnail, options.thumbnailSide());
                                 thumbsCreated++;
@@ -350,6 +382,11 @@ public class PhoneArchiver {
             } catch (IOException | RuntimeException e) {
                 if (e instanceof CancelledException ce) {
                     throw ce;
+                }
+                if (e instanceof InsufficientSpaceException space) {
+                    int done = moved.size() + copied.size();
+                    throw new InsufficientSpaceException(space.getMessage() + (done > 0
+                            ? " Wcześniej zarchiwizowano " + Texts.count(done, "plik", "pliki", "plików") + "." : ""));
                 }
                 errors.add(file + ": " + message(e));
                 if (!Files.isDirectory(target)) {
@@ -366,7 +403,7 @@ public class PhoneArchiver {
                 List.copyOf(errors), archivedBytes, dayFolder, Duration.ofNanos(System.nanoTime() - start),
                 thumbFolder == null ? ThumbnailStats.NONE
                         : new ThumbnailStats(thumbsCreated, thumbsExisting, thumbsUnsupported, thumbFolder),
-                waiting);
+                waiting, List.copyOf(incomplete));
     }
 
     private List<Path> collectSource(Path source, Path target, List<String> errors, BooleanSupplier cancelled) {
@@ -526,12 +563,61 @@ public class PhoneArchiver {
         }
     }
 
+    /** Wolne miejsce na dysku (tylko lokalnym — serwer nie podaje wolnego miejsca). */
+    private static final class SpaceCheck {
+        private final Path folder;
+        private final String what;
+        private final long minFree;
+        private java.nio.file.FileStore store;
+        private boolean unknown;
+
+        SpaceCheck(Path folder, String what, long minFree) {
+            this.folder = folder;
+            this.what = what;
+            this.minFree = minFree;
+        }
+
+        void require(long bytes) {
+            if (unknown || Locations.isRemote(folder)) {
+                return;
+            }
+            try {
+                if (store == null) {
+                    Path existing = folder;
+                    while (existing != null && !Files.exists(existing)) {
+                        existing = existing.getParent();
+                    }
+                    if (existing == null) {
+                        unknown = true;
+                        return;
+                    }
+                    store = Files.getFileStore(existing);
+                }
+                long free = store.getUsableSpace();
+                if (free - bytes < minFree) {
+                    throw new InsufficientSpaceException("Za mało miejsca na dysku " + what + " (" + folder.getRoot()
+                            + "): wolne " + Texts.formatBytes(free) + ", potrzeba " + Texts.formatBytes(bytes)
+                            + " i zapasu " + Texts.formatBytes(minFree) + ". Zwolnij miejsce — archiwizacja "
+                            + "wznowi się sama, pliki zostały w folderze archiwizowanym.");
+                }
+            } catch (IOException e) {
+                unknown = true; // nie da się sprawdzić — nie blokujemy
+            }
+        }
+    }
+
     private static boolean sameStore(Path file, Path folder) {
         if (Locations.isRemote(file) || Locations.isRemote(folder)) {
             return false; // różne połączenia albo serwer i dysk lokalny
         }
         try {
-            return Files.getFileStore(file).equals(Files.getFileStore(folder));
+            // Folder docelowy może jeszcze nie istnieć (nowy folder z datą, nowe archiwum) — liczy się dysk,
+            // na którym powstanie, czyli dysk najbliższego istniejącego folderu nadrzędnego.
+            Path existing = folder.toAbsolutePath();
+            while (existing != null && !Files.exists(existing)) {
+                existing = existing.getParent();
+            }
+            return existing != null && Files.getFileStore(file).equals(Files.getFileStore(existing));
         } catch (IOException | RuntimeException e) {
             return false;
         }

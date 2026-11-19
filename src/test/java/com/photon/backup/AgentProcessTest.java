@@ -48,12 +48,12 @@ class AgentProcessTest {
                 new AgentFiles(data.resolve("backup"), data.resolve("logs").resolve("kopia-zapasowa.log"), out), null);
         try {
             WaitForAsyncUtils.waitFor(30, TimeUnit.SECONDS,
-                    () -> control.isRunning() && control.readStatus().map(s -> s.lastCheck() != null).orElse(false));
+                    () -> control.isRunning() && control.readStatus().map(s -> s.lastCheck() != null && s.eventDriven()).orElse(false));
             AgentStatus status = control.readStatus().orElseThrow();
             assertEquals(AgentStatus.State.RUNNING, status.state());
             assertEquals(process.pid(), status.pid());
             assertEquals("Telefon", status.profile());
-            assertEquals(15, status.intervalSeconds(), "domyślnie co 15 s");
+            assertEquals(3600, status.intervalSeconds(), "domyślnie kontrolne sprawdzanie co godzinę");
 
             control.send(AgentCommand.of(AgentCommand.Type.STOP));
             assertTrue(process.waitFor(30, TimeUnit.SECONDS), "agent zakończył się po poleceniu");

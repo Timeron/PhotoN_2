@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -221,6 +222,41 @@ class ArchiveWatcherTest {
         assertNull(resumed.problem());
         assertEquals(1, resumed.archived());
         assertTrue(Files.exists(archive.resolve("2026-11-18/IMG_2.jpg")));
+    }
+
+    @Test
+    void truncatedUploadWaitsAndIsReportedAsStalled() throws Exception {
+        Path phone = dir.resolve("Telefon");
+        Path archive = dir.resolve("Archiwum");
+        Files.createDirectories(archive.resolve("2020-01-01"));
+        Path full = dir.resolve("pelne.jpg");
+        ThumbnailMakerTest.writePhoto(full, 400, 300, true);
+        byte[] bytes = Files.readAllBytes(full);
+        // Telefon przerwał wysyłanie w połowie — plik przestał rosnąć, ale jest ucięty.
+        Files.createDirectories(phone);
+        Files.write(phone.resolve("IMG_1.jpg"), java.util.Arrays.copyOf(bytes, bytes.length / 2));
+        ArchiveWatcher watcher = watcher(phone, archive, PhoneDuplicateAction.REMOVE, null);
+
+        watcher.runCycle(() -> false);
+        clock.advance(Duration.ofMinutes(5));
+        ArchiveWatcher.CycleReport report = watcher.runCycle(() -> false);
+        assertEquals(0, report.archived(), "ucięty plik nie trafia do archiwum, mimo że się nie zmienia");
+        assertEquals(1, report.waiting());
+        assertEquals(List.of(phone.resolve("IMG_1.jpg")), report.summary().incomplete());
+        assertTrue(report.stalled().isEmpty(), "jeszcze nie zgłaszany");
+
+        clock.advance(ArchiveWatcher.STALL_AFTER);
+        ArchiveWatcher.CycleReport stalled = watcher.runCycle(() -> false);
+        assertEquals(List.of(phone.resolve("IMG_1.jpg")), stalled.stalled());
+
+        // Telefon wysłał plik ponownie — cały.
+        Files.write(phone.resolve("IMG_1.jpg"), bytes);
+        watcher.runCycle(() -> false);
+        clock.advance(Duration.ofMinutes(1));
+        ArchiveWatcher.CycleReport done = watcher.runCycle(() -> false);
+        assertEquals(1, done.archived());
+        assertTrue(done.stalled().isEmpty());
+        assertTrue(Files.exists(archive.resolve("2026-11-18/IMG_1.jpg")));
     }
 
     private ArchiveWatcher watcher(Path phone, Path archive, PhoneDuplicateAction action, Path dups) {

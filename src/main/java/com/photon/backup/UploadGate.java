@@ -47,6 +47,7 @@ public class UploadGate implements PhoneArchiver.FileGate {
     private Map<Path, Observation> seenThisCycle = new HashMap<>();
     private final Map<Path, Signature> ignored = new HashMap<>();
     private int changesThisCycle;
+    private java.util.Set<Path> waitedThisCycle = new java.util.HashSet<>();
 
     public UploadGate(Duration quietPeriod, Clock clock) {
         this.quietPeriod = quietPeriod;
@@ -56,7 +57,19 @@ public class UploadGate implements PhoneArchiver.FileGate {
     /** Wywoływane przed każdym przebiegiem archiwizacji. */
     public synchronized void startCycle() {
         seenThisCycle = new HashMap<>();
+        waitedThisCycle = new java.util.HashSet<>();
         changesThisCycle = 0;
+    }
+
+    /** Pliki, które w tym przebiegu czekały (puste, rosnące, zapisywane przez inny program). */
+    public synchronized java.util.Set<Path> waitedThisCycle() {
+        return java.util.Set.copyOf(waitedThisCycle);
+    }
+
+    /** Jak długo plik się nie zmienia (od pierwszej obserwacji w obecnym stanie); zero, gdy nieznany. */
+    public synchronized Duration unchangedFor(Path file) {
+        Observation o = seenThisCycle.getOrDefault(file, observed.get(file));
+        return o == null ? Duration.ZERO : Duration.between(o.since(), clock.instant());
     }
 
     /** Ile plików w tym przebiegu było nowych albo zmieniło się od poprzedniego (np. trwa przesyłanie). */
@@ -99,13 +112,12 @@ public class UploadGate implements PhoneArchiver.FileGate {
             return PhoneArchiver.FileState.IGNORE;
         }
         ignored.remove(file);
-        if (signature.size() == 0) {
+        if (signature.size() == 0 || Duration.between(current.since(), now).compareTo(quietPeriod) < 0
+                || inUse(file)) {
+            waitedThisCycle.add(file);
             return PhoneArchiver.FileState.WAIT;
         }
-        if (Duration.between(current.since(), now).compareTo(quietPeriod) < 0) {
-            return PhoneArchiver.FileState.WAIT;
-        }
-        return inUse(file) ? PhoneArchiver.FileState.WAIT : PhoneArchiver.FileState.READY;
+        return PhoneArchiver.FileState.READY;
     }
 
     static Signature signature(Path file) throws IOException {

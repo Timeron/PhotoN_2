@@ -223,9 +223,14 @@ public final class AgentTray implements AgentLoop.Observer {
         StringBuilder text = new StringBuilder();
         text.append("Profil: ").append(s.profile());
         text.append("\nOstatnie sprawdzenie: ").append(s.lastCheck() == null ? "—" : TIME.format(s.lastCheck()));
-        if (s.nextCheck() != null) {
-            text.append(", następne: ").append(TIME.format(s.nextCheck()))
-                    .append(" (co ").append(AgentLoop.describe(java.time.Duration.ofSeconds(s.intervalSeconds()))).append(")");
+        text.append("\nNastępne: ").append(s.nextCheckText(TIME));
+        if (s.session() != null || s.lastSession() != null) {
+            text.append("\nSesja: ").append(s.sessionText(TIME));
+        }
+        if (!s.stalled().isEmpty()) {
+            text.append("\nPrzesyłanie stoi: ").append(s.stalled().size()).append(" — wyślij ponownie: ")
+                    .append(s.stalled().stream().limit(5).map(p -> String.valueOf(p.getFileName()))
+                            .collect(java.util.stream.Collectors.joining(", ")));
         }
         text.append("\nZarchiwizowano: ").append(s.archived())
                 .append(", miniatury: ").append(s.thumbnails())

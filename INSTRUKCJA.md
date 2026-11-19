@@ -40,6 +40,7 @@ W folderze programu (np. `C:\Programy\PhotoN`):
 |---|---|
 | `PhotoN.exe` | Aplikacja z oknem. Można przypiąć do paska zadań lub utworzyć skrót na pulpicie. |
 | `photon-backup.exe` | Agent kopii zapasowej z konsoli (`--profile`, `--status`, `--stop`, `--list`) — patrz [5.5](#55-kopia-zapasowa-agent-w-tle). |
+| `autostart.bat` | Włącza / wyłącza uruchamianie kopii zapasowej razem z Windows — patrz [5.5a](#55a-uruchamianie-kopii-zapasowej-razem-z-windows-autostartbat). |
 
 ### 2.2. Ze źródeł (w trakcie rozwijania)
 
@@ -49,6 +50,7 @@ W folderze programu (np. `C:\Programy\PhotoN`):
 | `uruchom.ps1` | To samo bez okna konsoli; wynik trafia do `uruchom.log`, przy błędzie pokazuje okno z komunikatem. |
 | `photon-backup.bat` | Agent kopii zapasowej z konsoli, uruchamiany ze źródeł. |
 | `eksport.bat` | Buduje wersję uruchomieniową — patrz [3](#3-eksport-wersja-uruchomieniowa). |
+| `autostart.bat` | Włącza / wyłącza uruchamianie agenta razem z Windows (z wersji wyeksportowanej w `dist\PhotoN`) — patrz [5.5a](#55a-uruchamianie-kopii-zapasowej-razem-z-windows-autostartbat). |
 | `testy.bat` | Uruchamia wszystkie testy (także testy interfejsu — bez ekranu, nie ruszają myszy). |
 
 Z IDE (np. IntelliJ IDEA) uruchamia się klasę `com.photon.Launcher` (aplikacja) albo
@@ -115,7 +117,10 @@ Aby przenieść je na inny komputer:
   (zmienia się też nazwa pliku ZIP).
 - **Ikona** pochodzi z `photon.ico` w folderze projektu.
 - **Agent uruchomiony z PhotoN działa z folderu programu** — przed usunięciem lub aktualizacją folderu programu
-  zatrzymaj agenta.
+  zatrzymaj agenta. `eksport.bat` sam odmówi pracy, jeśli działa agent uruchomiony z `dist\PhotoN`
+  (np. przez `autostart.bat`), bo eksport tworzy ten folder od nowa.
+- **`autostart.bat` jest kopiowany do wersji wyeksportowanej** (obok `PhotoN.exe`) — patrz
+  [5.5a](#55a-uruchamianie-kopii-zapasowej-razem-z-windows-autostartbat).
 - **Instalator** (`.msi` / `.exe` z kreatorem) nie jest tworzony — wymagałby dodatkowego narzędzia WiX.
   Wystarcza rozpakowanie ZIP. Gdyby był potrzebny: zainstaluj WiX Toolset i w `eksport.bat` zmień
   `--type app-image` na `--type msi` (z opcjami `--win-menu --win-shortcut --win-dir-chooser`).
@@ -137,7 +142,8 @@ Aby przenieść je na inny komputer:
 
 **Agent kopii zapasowej**
 - Agent działa **dalej po zamknięciu PhotoN** — to celowe. Zatrzymuje się dopiero poleceniem (przycisk,
-  `photon-backup --stop`), wylogowaniem lub wyłączeniem komputera. Automatycznie przy logowaniu się nie uruchamia.
+  `photon-backup --stop`), wylogowaniem lub wyłączeniem komputera. Przy logowaniu uruchamia się tylko po
+  włączeniu tego skryptem `autostart.bat` (patrz [5.5a](#55a-uruchamianie-kopii-zapasowej-razem-z-windows-autostartbat)).
 - Agent korzysta z plików programu: w wersji wyeksportowanej z folderu programu (`app\`, `runtime\`), przy
   uruchamianiu ze źródeł z `target\classes` i bibliotek w `.m2` / `target\agent-lib`.
   **Przed aktualizacją programu, `mvn clean`, eksportem albo przeniesieniem folderu zatrzymaj agenta** — Windows
@@ -167,8 +173,8 @@ Aby przenieść je na inny komputer:
   - Nieczytelny folder w archiwum (np. brak uprawnień) również wstrzymuje archiwizację — komunikat wskazuje
     który; trzeba to naprawić. Gdy nie da się odczytać pojedynczego pliku archiwum przy porównywaniu, tylko
     pliki źródłowe, które mogłyby być jego duplikatem, zostają w źródle (z błędem w podsumowaniu).
-  - Agent sprawdza archiwum tylko wtedy, gdy jest coś do zarchiwizowania; po powrocie dysku wznawia pracę przy
-    najbliższym sprawdzeniu (do 15 minut w trybie wolnym albo od razu po pojawieniu się nowego pliku).
+  - Agent sprawdza archiwum tylko wtedy, gdy jest coś do zarchiwizowania; po awarii ponawia próby co 15 s
+    (po 15 minutach — w odstępie kontrolnym), a nowy plik w źródle wznawia pracę od razu.
   - Litery dysków sieciowych (`Z:`) są przypisane do zalogowanego użytkownika. Dla pewności lepiej wskazywać
     ścieżki `\\serwer\udział\…`.
   - Nieosiągalny dysk sieciowy potrafi blokować operacje na plikach przez kilkadziesiąt sekund — w tym czasie
@@ -237,6 +243,12 @@ z datą `RRRR-MM-DD` (np. `2016-02-23`).
     przy kolizji nazw `IMG (1).jpg` — nic nie jest nadpisywane),
   - jest już w archiwum (także pod inną nazwą) → **duplikat**, zostaje w źródle.
 - Brane są tylko zdjęcia i filmy; inne pliki zostają na miejscu.
+- **Niekompletne pliki zostają w źródle** — każde zdjęcie i film jest przed przeniesieniem sprawdzany, czy nie
+  jest ucięty (np. przerwane przesyłanie z telefonu); podsumowanie podaje, ile pominięto (patrz
+  [kompletność plików](#kompletność-plików)).
+- **Za mało miejsca** na dysku archiwum lub miniatur (mniej niż 1 GB zapasu po przeniesieniu pliku) — archiwizacja
+  zatrzymuje się z komunikatem „Za mało miejsca”; pozostałe pliki zostają w źródle. Przeniesienie w obrębie
+  jednego dysku (zmiana nazwy) miejsca nie wymaga i nie jest sprawdzane.
 - **Duplikaty** (sekcja „Duplikaty”): domyślnie *przenieś do folderu zastępczego (śmietnika)* — z zachowaniem
   podfolderów źródła; albo *usuń z folderu archiwizowanego*. W obu przypadkach na końcu pojawia się lista
   i pytanie o potwierdzenie. Kopie w archiwum zawsze zostają.
@@ -273,12 +285,46 @@ osobny, lekki program bez okna (bez JavaFX, z ograniczoną pamięcią). Działa 
 **Jak działa**
 - Robi to samo co „Archiwizacja telefonu”: przenosi nowe pliki do folderu z dzisiejszą datą, wykrywa duplikaty,
   tworzy miniatury.
-- **Tempo**: sprawdza folder co **15 sekund**; po **15 minutach** bez nowych plików — co **15 minut**; gdy coś się
-  pojawi, wraca do 15 sekund.
 - **Natychmiastowe powiadomienia**: pojawienie się nowego pliku (także po zmianie nazwy, np. `IMG.jpg.part` →
-  `IMG.jpg`) budzi agenta po ok. 1,5 s, nawet w trybie 15-minutowym.
-- **Pliki w trakcie przesyłania** (np. z internetu) czekają: plik trafia do archiwum dopiero, gdy nie jest pusty,
-  przez **30 sekund** nie zmienił rozmiaru ani daty i żaden program nie trzyma go otwartego do zapisu.
+  `IMG.jpg`) budzi agenta po ok. 1,5 s (powiadomienia Windows).
+- **Tempo — gdy powiadomienia działają** (dysk lokalny, większość dysków sieciowych):
+  - nic się nie dzieje → agent **śpi i nie dotyka dysków** (dyski mogą zasnąć); najwyżej robi **sprawdzenie
+    kontrolne** na wypadek zgubionego powiadomienia — odstęp w zakładce „Kopia zapasowa” (*co 15 minut*,
+    *co godzinę* — domyślnie, *co 6 godzin* albo *wyłączone*); zmiana obowiązuje po ponownym uruchomieniu agenta;
+  - plik w trakcie przesyłania albo problem z dostępem → sprawdzanie co **15 sekund**, aż plik się prześle
+    (albo problem minie), potem agent znów śpi.
+- **Tempo — bez powiadomień** (folder na serwerze FTP/SFTP, dysk sieciowy bez obsługi powiadomień): co
+  **15 sekund**, a po **15 minutach** ciszy w odstępie kontrolnym (przy *wyłączone* — co godzinę).
+- Stan agenta (`backup\status.json`) jest zapisywany tylko przy zmianach — bez cyklicznych zapisów, które
+  nie pozwalałyby zasnąć dyskowi systemowemu. Zakładka „Kopia zapasowa” pokazuje *Następne sprawdzenie:
+  przy nowym pliku; kontrolnie o …*.
+- **Pliki w trakcie przesyłania** (np. z telefonu przez internet) czekają. Plik trafia do archiwum dopiero, gdy:
+  - nie jest pusty i żaden program nie trzyma go otwartego do zapisu,
+  - przez **wybrany czas** nie zmienił rozmiaru ani daty — ustawienie *Plik przesłany, gdy bez zmian przez* w
+    zakładce „Kopia zapasowa”: 30 s / **2 minuty (domyślnie, wolny internet)** / 5 minut,
+  - **jest kompletny** wg budowy pliku (patrz niżej) — telefon potrafi przerwać wysyłanie na dłużej (wygaszony
+    ekran, słaby zasięg); ucięty plik nie trafi do archiwum, nawet jeśli długo się nie zmienia.
+- <a id="kompletność-plików"></a>**Kompletność plików** (także w ręcznej archiwizacji):
+  - JPEG — po danych obrazu jest znacznik końca obrazu (dane dopisane za nim, np. film w „zdjęciach
+    ruchomych” Samsunga/Google, są dozwolone),
+  - PNG, GIF — końcowy blok/bajt pliku; WebP, AVI — długość z nagłówka,
+  - MP4, MOV, 3GP, HEIC, HEIF, AVIF — bloki pliku dokładnie wypełniają plik, a film ma indeks (`moov`);
+    nagranie ucięte przed indeksem jest niekompletne,
+  - pozostałe formaty (RAW, MKV…) — decyduje tylko brak zmian przez wybrany czas.
+- **Przesyłanie stoi**: plik niekompletny (albo pusty, albo zablokowany), który od **15 minut** się nie zmienia,
+  jest zgłaszany raz — w dzienniku, ostrzeżeniu przy ikonie i na czerwono w zakładce „Kopia zapasowa” (lista
+  plików). Zwykle oznacza to przerwane wysyłanie — wyślij te pliki z telefonu ponownie. Zostają w folderze
+  archiwizowanym; gdy plik stanie się kompletny, zostanie zarchiwizowany.
+- **Za mało miejsca** na dysku archiwum lub miniatur — agent wstrzymuje archiwizację z ostrzeżeniem i wznawia ją
+  sam, gdy miejsce się zwolni (pliki zostają w źródle).
+- **Sesje**: pierwszy nowy plik zaczyna sesję; kończy się ona po **15 minutach** bez nowych plików (pliki, których
+  przesyłanie stoi, jej nie przedłużają). W trakcie zakładka „Kopia zapasowa” i okienko stanu pokazują postęp:
+  *od 13:05 — zarchiwizowano 120 plików (1,2 GB), czeka na przesłanie 15, 12 plików/min*. Na końcu:
+  - podsumowanie w dzienniku, powiadomieniu i okienku stanu („Sesja 2026-11-19 13:05 – 14:40 (1 h 35 min):
+    zarchiwizowano 1243 pliki (12,3 GB), miniatury: …, duplikaty: 15, błędy: 0.”),
+  - lista plików w CSV: `logs\sesje\sesja-RRRR-MM-DD_GGMM.csv` (czas; operacja; plik; plik w archiwum
+    dla duplikatów; rozmiar) — otwiera się w Excelu.
+  Zatrzymanie agenta w trakcie sesji też zapisuje podsumowanie.
 - **Duplikaty**: przy akcji „śmietnik” są przenoszone automatycznie; przy akcji „usuń” nic nie jest usuwane
   bez zgody — czekają na przycisk „Usuń zgłoszone duplikaty” (każdy jest zgłaszany tylko raz).
 - Niedostępny folder (np. odłączony dysk) — sprawdzenie jest pomijane z wpisem w dzienniku, agent działa dalej.
@@ -291,7 +337,7 @@ także gdy PhotoN jest zamknięty:
   podczas sprawdzania ikona zmienia kolor na turkusowo-zielony;
 - menu pod prawym przyciskiem: *Pokaż stan…*, *Sprawdź teraz*, *Otwórz PhotoN*, *Zatrzymaj kopię zapasową*;
   dwuklik otwiera PhotoN (a przy uruchamianiu ze źródeł — okienko stanu);
-- *Pokaż stan…* otwiera okienko w prawym dolnym rogu ekranu: pełny stan, **ostatnie zdarzenia** (do 20 —
+- *Pokaż stan…* otwiera okienko w prawym dolnym rogu ekranu: pełny stan (z postępem sesji i plikami, których przesyłanie stoi), **ostatnie zdarzenia** (do 20 —
   to samo, co trafia do powiadomień) i przyciski *Sprawdź teraz*, *Otwórz PhotoN*, *Zatrzymaj*. Okienko jest
   widoczne zawsze, także gdy Windows ukrywa powiadomienia (tryb „Nie przeszkadzać”, wyłączone powiadomienia);
 - powiadomienia w rogu ekranu, gdy pliki zostaną zarchiwizowane, duplikaty przeniesione albo czekają na decyzję
@@ -299,6 +345,9 @@ także gdy PhotoN jest zamknięty:
   nie pokazują, sprawdź *Ustawienia Windows → System → Powiadomienia* („Nie przeszkadzać”, powiadomienia dla
   „Java(TM) Platform SE binary” lub PhotoN) — zdarzenia i tak widać w okienku stanu i w dzienniku;
 - *Otwórz PhotoN* działa w wersji wyeksportowanej; przy uruchamianiu ze źródeł jest nieaktywne.
+
+**Uruchamianie razem z Windows** — skrypt `autostart.bat`, opisany w
+[5.5a](#55a-uruchamianie-kopii-zapasowej-razem-z-windows-autostartbat).
 
 **Jak zatrzymać agenta**, gdy PhotoN jest zamknięty: ikona w zasobniku → *Zatrzymaj kopię zapasową*, albo
 `photon-backup --stop`, albo otwórz PhotoN → „Kopia zapasowa” → Zatrzymaj. Agent uruchomiony z PhotoN nie ma okna
@@ -326,10 +375,107 @@ photon-backup --list                lista profili „Archiwizacji telefonu”
 | Plik | Rola |
 |---|---|
 | `backup\agent.lock` | Trzymany przez działającego agenta — jedna kopia naraz; po nim PhotoN poznaje, że agent żyje. |
-| `backup\status.json` | Stan agenta, zapisywany po każdym sprawdzeniu i co 30 s. |
+| `backup\status.json` | Stan agenta, zapisywany przy zmianach (sprawdzenie, nowy plik, polecenie, problem). |
+| `backup\agent-settings.json` | Ustawienia agenta: odstęp kontrolnego sprawdzania. |
 | `backup\commands\*.json` | Polecenia (zatrzymaj, sprawdź teraz, usuń duplikaty); agent wykonuje je i usuwa. Polecenia sprzed startu agenta są pomijane. |
 | `logs\kopia-zapasowa.log` | Dziennik zdarzeń (przy starcie agenta przenoszony do `.1`, gdy przekroczy 5 MB). |
 | `logs\backup-agent.out` | Wyjście procesu agenta uruchomionego z PhotoN — tu szukać przyczyny, gdy agent się nie uruchamia. |
+
+### 5.5a. Uruchamianie kopii zapasowej razem z Windows (`autostart.bat`)
+
+**Co robi:** ustawia (albo usuwa) automatyczne uruchamianie agenta kopii zapasowej przy każdym logowaniu
+do Windows. Agent startuje od razu z wybranym profilem „Archiwizacji telefonu” i zaczyna pilnować folderu —
+bez otwierania PhotoN i bez okna konsoli. Widać go jako ikonę PhotoN przy zegarze (patrz [5.5](#55-kopia-zapasowa-agent-w-tle)).
+
+**Gdzie jest:**
+- w wersji wyeksportowanej — w folderze programu, obok `PhotoN.exe` (eksport kopiuje go tam automatycznie);
+- w projekcie — w głównym folderze; używa wtedy wersji wyeksportowanej z `dist\PhotoN`
+  (najpierw trzeba wykonać `eksport.bat`).
+
+#### Włączenie krok po kroku
+
+1. W PhotoN, w zakładce **Archiwizacja telefonu**, zapisz profil z folderami, które agent ma pilnować
+   (np. „Telefon”). Sprawdź go raz ręcznie przyciskiem *Archiwizuj*.
+2. Kliknij dwukrotnie `autostart.bat`. Otworzy się okno z menu i aktualnym stanem:
+   ```
+   PhotoN - uruchamianie kopii zapasowej razem z Windows
+
+   Uruchamianie razem z Windows: WYŁĄCZONE
+   Agent nie działa.
+
+     1 - Włącz (wybierz profil)
+     2 - Wyłącz
+     3 - Zakończ
+   ```
+3. Wciśnij **1**. Skrypt wypisze zapisane profile, np.
+   `DevTestPhone    2024-03-06 → __Telefon-Backup  •  z podfolderami …`
+4. Wpisz **nazwę profilu** dokładnie tak jak na liście (tylko nazwę, bez opisu) i zatwierdź Enterem.
+5. Na pytanie *„Uruchomić agenta teraz? [T/N]”* wciśnij **T**, jeśli kopia zapasowa ma ruszyć od razu
+   (a nie dopiero po następnym zalogowaniu). Przy zegarze pojawi się ikona PhotoN.
+6. Wciśnij dowolny klawisz, aby zamknąć okno.
+
+Od tej chwili po każdym zalogowaniu agent uruchomi się sam z tym profilem.
+
+#### Wyłączenie
+
+Dwuklik `autostart.bat` → **2**. Skrypt usuwa wpis i — jeśli agent właśnie działa — pyta,
+czy go zatrzymać (**T** zatrzymuje, **N** zostawia do wylogowania).
+
+#### Zmiana profilu
+
+Dwuklik `autostart.bat` → **1** i podaj nowy profil (wpis jest nadpisywany). Jeśli agent już działa,
+nowy profil zacznie obowiązywać po jego ponownym uruchomieniu (ikona → *Zatrzymaj kopię zapasową*, potem
+`autostart.bat` → 1 → T albo wylogowanie i zalogowanie).
+
+#### Z konsoli (bez menu)
+
+| Polecenie | Co robi |
+|---|---|
+| `autostart.bat wlacz "Telefon"` | Włącza dla profilu „Telefon” (pyta tylko, czy uruchomić agenta teraz) |
+| `autostart.bat wylacz` | Wyłącza (pyta, czy zatrzymać działającego agenta) |
+| `autostart.bat stan` | Pokazuje, czy jest włączone, dla jakiego profilu i czy agent działa |
+
+Kod wyjścia 1 oznacza błąd (np. nieistniejący profil) — przydatne w innych skryptach.
+
+#### Co dokładnie zapisuje
+
+Jeden wpis w rejestrze **bieżącego użytkownika** — nie wymaga uprawnień administratora i nie dotyczy
+innych kont:
+- klucz: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- wartość: `PhotoN-kopia-zapasowa`
+- dane: polecenie uruchamiające agenta wbudowaną Javą programu, bez okna konsoli:
+  ```
+  "<folder programu>\runtime\bin\javaw.exe" -Xmx512m … -Dphoton.appLauncher="<folder programu>\PhotoN.exe"
+      -cp "<folder programu>\app\*" com.photon.backup.BackupAgent --profile "Telefon"
+  ```
+
+Ten sam wpis widać w **Menedżerze zadań → Aplikacje autostartu** (jako „Java(TM) Platform SE binary” albo
+„OpenJDK Platform binary”) — tam też można go tymczasowo wyłączyć. Skrypt przed zapisem sprawdza, czy profil
+istnieje; nic poza tym wpisem nie zmienia.
+
+#### Na co uważać
+
+- **Ścieżka programu jest zapisana we wpisie.** Po przeniesieniu folderu programu albo instalacji w innym
+  miejscu uruchom `autostart.bat` ponownie i wybierz *Włącz*.
+- **Profil jest wczytywany przy starcie agenta.** Zmiany w profilu (np. inny folder) działają dopiero
+  po ponownym uruchomieniu agenta.
+- **Usunięcie lub zmiana nazwy profilu** sprawi, że agent przy logowaniu od razu się zakończy
+  (komunikat w `logs\backup-agent.out`). Włącz autostart ponownie dla właściwego profilu.
+- **Dyski sieciowe i serwery** mogą być niedostępne tuż po zalogowaniu — agent wtedy pomija sprawdzenie
+  i próbuje ponownie co 15 s (patrz [4](#4-na-co-zwracać-uwagę)); nic nie jest przenoszone, dopóki
+  archiwum nie jest dostępne.
+- Naraz działa tylko jeden agent — jeśli już działa (np. uruchomiony z PhotoN), drugi od razu się kończy.
+- **W projekcie** (agent z `dist\PhotoN`): `eksport.bat` odmówi eksportu, dopóki agent działa, bo eksport
+  tworzy ten folder od nowa. Zatrzymaj agenta z ikony, wyeksportuj, uruchom go ponownie (`autostart.bat` → 1 → T).
+
+#### Gdy coś nie działa
+
+- *„Nie znaleziono PhotoN.exe obok skryptu ani w dist\PhotoN”* — skrypt leży poza folderem programu;
+  w projekcie najpierw wykonaj `eksport.bat`.
+- *„Nie ma profilu …”* — nazwa różni się od zapisanej (wielkość liter, spacje). Skopiuj ją z listy.
+- Po zalogowaniu nie ma ikony — sprawdź `autostart.bat stan`, ikonę pod strzałką „^” przy zegarze,
+  *Aplikacje autostartu* w Menedżerze zadań (czy wpis nie jest wyłączony) oraz `logs\backup-agent.out`
+  i `logs\kopia-zapasowa.log` w folderze danych (patrz [6](#6-gdzie-aplikacja-trzyma-dane)).
 
 ### 5.6. Ustawienia
 
@@ -384,8 +530,11 @@ nazwy połączenia profile trzeba poprawić (można też wkleić taką pełną �
   nie przenosi i czeka. Po nieudanej próbie połączenia kolejne przez 30 s od razu zgłaszają ten sam błąd,
   zamiast za każdym razem czekać do 15 s na odpowiedź — ale pierwsza próba może na chwilę zatrzymać okno.
 - Agent kopii zapasowej z folderem źródłowym na serwerze: serwer nie powiadamia o nowych plikach, więc działa
-  tylko sprawdzanie cykliczne (co 15 s, a po 15 minutach ciszy co 15 minut). Plik jest uznawany za w pełni
-  przesłany, gdy jego rozmiar i data nie zmieniają się przez 30 s (blokady pliku nie da się sprawdzić na serwerze).
+  tylko sprawdzanie cykliczne (co 15 s, a po 15 minutach ciszy w odstępie kontrolnym z zakładki „Kopia
+  zapasowa”, domyślnie co godzinę). Plik jest uznawany za w pełni przesłany, gdy jego rozmiar i data nie
+  zmieniają się przez czas wybrany w zakładce (domyślnie 2 minuty) i jest kompletny (patrz
+  [kompletność plików](#kompletność-plików)); blokady pliku nie da się sprawdzić na serwerze. Sprawdzenie
+  kompletności filmu lub zdjęcia na serwerze może wymagać odczytania pliku — przy wolnym łączu trwa to dłużej.
 - *Otwórz folder* w Eksploratorze nie działa dla folderów na serwerze (pojawia się komunikat). Otwarcie
   pliku z serwera (np. w wynikach duplikatów) najpierw pobiera go do folderu tymczasowego.
 - Ukryte pliki i foldery: na serwerze ukryte są tylko nazwy zaczynające się od kropki.
@@ -410,6 +559,7 @@ Można go zmienić właściwością Javy `-Dphoton.dataDir=<folder>` (używają 
 | `thumbnails.json`, `phone-archive.json` | Ostatnio użyte ustawienia formularzy |
 | `cache\hashes\` | Pamięć sum kontrolnych (można usunąć — odbuduje się) |
 | `logs\` | Dzienniki: operacje na plikach, kopia zapasowa, wyjście agenta |
+| `logs\sesje\` | Listy plików z sesji kopii zapasowej (CSV) |
 | `backup\` | Komunikacja z agentem kopii zapasowej (patrz [5.5](#55-kopia-zapasowa-agent-w-tle)) |
 
 Raporty CSV domyślnie trafiają do `Dokumenty\PhotoN Raporty`.
@@ -422,3 +572,8 @@ Raporty CSV domyślnie trafiają do `Dokumenty\PhotoN Raporty`.
 - Testy interfejsu działają **bez ekranu** (Monocle) — nie przejmują myszy ani klawiatury.
   `mvn test -Dgui` uruchamia je w prawdziwych oknach (wtedy nie ruszaj myszy).
 - Testy używają własnego folderu danych `target\test-data` — nie dotykają prawdziwych danych w `%APPDATA%`.
+- Obsługa serwerów jest testowana na **wbudowanych serwerach FTP i SFTP** (Apache MINA), uruchamianych przez
+  testy lokalnie na losowych portach — nie trzeba żadnego prawdziwego serwera ani internetu. FTPS nie ma
+  osobnego testu (wbudowany serwer nie ma certyfikatu); korzysta z tego samego kodu co FTP.
+- Pełny przebieg trwa kilka–kilkanaście minut (testy agenta czekają na prawdziwe zdarzenia systemu plików).
+  Pojedynczą klasę uruchamia np. `mvn test -Dtest=AgentLoopTest`.
