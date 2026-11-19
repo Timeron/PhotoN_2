@@ -1,17 +1,14 @@
 package com.photon.backup;
 
-import com.photon.AppPaths;
-import com.photon.duplicates.scan.HashCache;
 import com.photon.phonearchive.PhoneArchiveOptions;
 import com.photon.phonearchive.PhoneArchiveProfileStore;
 import com.photon.phonearchive.PhoneArchiver;
 import com.photon.profiles.Profile;
-import com.photon.settings.SettingsService;
 import com.photon.ui.Dialogs;
 import com.photon.ui.FormSection;
 import com.photon.ui.Texts;
-import javafx.application.Platform;
-import javafx.concurrent.Task;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.css.PseudoClass;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -27,6 +24,7 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import javafx.util.Duration;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignD;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignI;
@@ -36,93 +34,60 @@ import org.kordamp.ikonli.materialdesign2.MaterialDesignS;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignT;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Objects;
 
 import static com.photon.ui.Forms.fieldLabel;
 import static com.photon.ui.Forms.formGrid;
 
 /**
- * Zakładka „Kopia zapasowa”: archiwizacja w tle według wybranego profilu „Archiwizacji telefonu”,
- * sprawdzana cyklicznie (domyślnie co minutę).
+ * Zakładka „Kopia zapasowa”: podgląd i sterowanie agentem archiwizacji w tle ({@link BackupAgent}).
+ * Agent to osobny, lekki proces — działa także po zamknięciu PhotoN. Zakładka odczytuje jego stan
+ * ({@code backup/status.json}) i dziennik, a polecenia wysyła przez pliki w {@code backup/commands/}.
  */
 public class BackupView extends BorderPane {
 
     private static final PseudoClass ERROR = PseudoClass.getPseudoClass("error");
     private static final PseudoClass ACTIVE = PseudoClass.getPseudoClass("active");
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
-    private static final DateTimeFormatter LOG_TIME =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
-    private static final int MAX_LOG_ENTRIES = 500;
+    private static final DateTimeFormatter DATE_TIME =
+            DateTimeFormatter.ofPattern("d.MM.yyyy HH:mm").withZone(ZoneId.systemDefault());
+    private static final int LOG_LINES = 300;
+    /** Ile czekać na zgłoszenie się uruchomionego agenta, zanim pokażemy błąd. */
+    private static final java.time.Duration START_TIMEOUT = java.time.Duration.ofSeconds(20);
 
     private final PhoneArchiveProfileStore profiles;
-    private final SettingsService settings;
-    private final Duration fastInterval;
-    private final Duration slowInterval;
-    private final Duration idleAfter;
-    private final Duration quietPeriod;
-    private CheckPacer pacer;
-    private final Clock clock;
+    private final AgentControl control;
 
     private final ComboBox<Profile<PhoneArchiveOptions>> profileCombo = new ComboBox<>();
     private final Label profileDescription = new Label();
     private final Label stateLabel = new Label();
+    private final Label sinceLabel = new Label("—");
     private final Label lastCheckLabel = new Label("—");
     private final Label nextCheckLabel = new Label("—");
-    private final Label totalsLabel = new Label();
+    private final Label notificationsLabel = new Label("—");
+    private final Label totalsLabel = new Label("—");
+    private final Label problemLabel = new Label();
     private final ListView<String> log = new ListView<>();
     private final Label feedback = new Label();
     private final Button startButton = new Button();
     private final Button checkNowButton = new Button("Sprawdź teraz", new FontIcon(MaterialDesignR.REFRESH));
     private final Button removeDuplicatesButton = new Button();
+    private final Timeline refresher = new Timeline(new KeyFrame(Duration.seconds(1), e -> refresh()));
 
-    private volatile ScheduledExecutorService executor;
-    private volatile ScheduledFuture<?> schedule;
-    private ArchiveWatcher watcher;
-    /** Flaga zatrzymania bieżącego uruchomienia (nowa przy każdym starcie). */
-    private AtomicBoolean stopRequested = new AtomicBoolean();
-    private final AtomicBoolean cycleRunning = new AtomicBoolean();
+    private boolean running;
+    private AgentStatus status;
+    private Instant startRequestedAt;
+    private boolean stopRequested;
 
-    private int totalArchived;
-    private int totalThumbnails;
-    private int totalMovedDuplicates;
-    private int totalErrors;
-    private int waitingNow;
-
-    public BackupView(PhoneArchiveProfileStore profiles, SettingsService settings) {
-        this(profiles, settings, CheckPacer.FAST, CheckPacer.SLOW, CheckPacer.IDLE_AFTER, Duration.ofSeconds(30),
-                Clock.systemDefaultZone());
-    }
-
-    /**
-     * @param fastInterval co ile sprawdzać folder, gdy coś się dzieje
-     * @param slowInterval co ile sprawdzać po dłuższej ciszy
-     * @param idleAfter    po jakim czasie bez nowych plików przejść na {@code slowInterval}
-     * @param quietPeriod  jak długo plik musi się nie zmieniać, by uznać go za w pełni przesłany
-     */
-    public BackupView(PhoneArchiveProfileStore profiles, SettingsService settings, Duration fastInterval,
-                      Duration slowInterval, Duration idleAfter, Duration quietPeriod, Clock clock) {
+    public BackupView(PhoneArchiveProfileStore profiles, AgentControl control) {
         this.profiles = profiles;
-        this.settings = settings;
-        this.fastInterval = fastInterval;
-        this.slowInterval = slowInterval;
-        this.idleAfter = idleAfter;
-        this.quietPeriod = quietPeriod;
-        this.clock = clock;
+        this.control = control;
         getStyleClass().add("backup-view");
 
         VBox content = new VBox(18, buildProfileSection(), buildStatusSection(), buildLogSection());
@@ -134,19 +99,27 @@ public class BackupView extends BorderPane {
         setCenter(scroll);
         setBottom(buildActionBar());
 
+        // Odświeżanie tylko wtedy, gdy zakładka jest widoczna.
+        refresher.setCycleCount(Timeline.INDEFINITE);
+        sceneProperty().addListener((obs, old, scene) -> {
+            if (scene == null) {
+                refresher.stop();
+            } else {
+                refresh();
+                refresher.play();
+            }
+        });
+
         reloadProfiles();
-        refreshState();
+        refresh();
     }
 
     // =====================================================================
     // Publiczne API
     // =====================================================================
 
-    /** Wczytuje profile „Archiwizacji telefonu” (mogły się zmienić). W trakcie pracy nic nie zmienia. */
+    /** Wczytuje profile „Archiwizacji telefonu” (mogły się zmienić). */
     public void reloadProfiles() {
-        if (isRunning()) {
-            return;
-        }
         Profile<PhoneArchiveOptions> current = profileCombo.getValue();
         List<Profile<PhoneArchiveOptions>> all;
         try {
@@ -156,17 +129,18 @@ public class BackupView extends BorderPane {
             showStatus("Nie udało się wczytać profili: " + e.getMessage(), true);
         }
         profileCombo.getItems().setAll(all);
-        if (current != null) {
-            all.stream().filter(p -> p.name().equals(current.name())).findFirst().ifPresent(profileCombo::setValue);
+        String wanted = running && status != null ? status.profile() : current == null ? null : current.name();
+        if (wanted != null) {
+            all.stream().filter(p -> p.name().equals(wanted)).findFirst().ifPresent(profileCombo::setValue);
         }
         if (profileCombo.getValue() == null && !all.isEmpty()) {
             profileCombo.setValue(all.get(0));
         }
-        refreshState();
+        refreshButtons();
     }
 
     public boolean isRunning() {
-        return watcher != null;
+        return running;
     }
 
     public ComboBox<Profile<PhoneArchiveOptions>> profileCombo() {
@@ -177,11 +151,29 @@ public class BackupView extends BorderPane {
         return List.copyOf(log.getItems());
     }
 
-    /** Uruchamia archiwizację w tle według wybranego profilu. */
-    public void start() {
-        if (isRunning()) {
-            return;
+    /** Odczytuje stan agenta i dziennik (wywoływane co sekundę, gdy zakładka jest widoczna). */
+    public void refresh() {
+        running = control.isRunning();
+        status = control.readStatus().orElse(status);
+        if (running) {
+            startRequestedAt = null;
+        } else {
+            stopRequested = false;
+            if (startRequestedAt != null && Instant.now().isAfter(startRequestedAt.plus(START_TIMEOUT))) {
+                startRequestedAt = null;
+                showStatus("Agent nie uruchomił się. Szczegóły: " + control.files().consoleFile(), true);
+            }
         }
+        refreshStatus();
+        refreshLog();
+        refreshButtons();
+    }
+
+    // =====================================================================
+    // Akcje
+    // =====================================================================
+
+    private void start() {
         Profile<PhoneArchiveOptions> profile = profileCombo.getValue();
         if (profile == null) {
             showStatus("Wybierz profil archiwizacji. Profile tworzysz w zakładce „Archiwizacja telefonu”.", true);
@@ -192,178 +184,41 @@ public class BackupView extends BorderPane {
             showStatus("Profil „" + profile.name() + "”: " + problem, true);
             return;
         }
-        HashCache cache = HashCache.inCacheDir(settings.get().effectiveCacheDir()).load();
-        watcher = new ArchiveWatcher(profile.name(), profile.options(), cache, quietPeriod, clock);
-        AtomicBoolean stop = new AtomicBoolean();
-        stopRequested = stop;
-        pacer = new CheckPacer(fastInterval, slowInterval, idleAfter, clock);
-        totalArchived = totalThumbnails = totalMovedDuplicates = totalErrors = waitingNow = 0;
-        boolean lowPriority = settings.get().lowPriorityScan();
-        executor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "photon-backup-watcher");
-            t.setDaemon(true);
-            if (lowPriority) {
-                t.setPriority(Thread.MIN_PRIORITY);
-            }
-            return t;
-        });
-        ArchiveWatcher current = watcher;
-        CheckPacer currentPacer = pacer;
-        schedule = executor.schedule(() -> runCycle(current, currentPacer, stop), 0, TimeUnit.MILLISECONDS);
-        addLog("Start: profil „" + profile.name() + "”, sprawdzanie co " + describe(fastInterval)
-                + " (po " + describe(idleAfter) + " bez nowych plików — co " + describe(slowInterval) + ").");
-        showStatus("", false);
-        refreshState();
-    }
-
-    /** Zatrzymuje archiwizację w tle. Trwający przebieg kończy się przy najbliższym pliku. */
-    public void stop() {
-        if (!isRunning()) {
-            return;
-        }
-        stopRequested.set(true);
-        schedule.cancel(false);
-        executor.shutdown();
-        addLog("Zatrzymano archiwizację w tle.");
-        watcher = null;
-        executor = null;
-        schedule = null;
-        pacer = null;
-        nextCheckLabel.setText("—");
-        refreshState();
-    }
-
-    /** Uruchamia przebieg od razu (gdy żaden nie trwa) — zaplanowany przebieg jest zastępowany. */
-    public void checkNow() {
-        if (isRunning() && !cycleRunning.get() && schedule != null && schedule.cancel(false)) {
-            ArchiveWatcher current = watcher;
-            CheckPacer currentPacer = pacer;
-            AtomicBoolean stop = stopRequested;
-            schedule = executor.schedule(() -> runCycle(current, currentPacer, stop), 0, TimeUnit.MILLISECONDS);
-        }
-    }
-
-    // =====================================================================
-    // Przebieg (wątek w tle)
-    // =====================================================================
-
-    private void runCycle(ArchiveWatcher current, CheckPacer currentPacer, AtomicBoolean stop) {
-        if (stop.get()) {
-            return;
-        }
-        cycleRunning.set(true);
-        Platform.runLater(this::refreshState);
-        ArchiveWatcher.CycleReport report;
         try {
-            report = current.runCycle(stop::get);
-        } catch (PhoneArchiver.CancelledException e) {
-            report = null;
-        } catch (RuntimeException e) {
-            report = new ArchiveWatcher.CycleReport(clock.instant(), null, null, List.of(),
-                    "Nieoczekiwany błąd: " + e.getMessage(), 0);
-        } finally {
-            cycleRunning.set(false);
+            control.start(profile.name());
+            startRequestedAt = Instant.now();
+            showStatus("Uruchamianie agenta… Będzie działał także po zamknięciu PhotoN.", false);
+        } catch (IOException e) {
+            showStatus("Nie udało się uruchomić agenta: " + e.getMessage(), true);
         }
-        // Następne sprawdzenie planujemy od razu w tym wątku — tempo zależy od tego, czy coś się pojawiło.
-        Duration next = currentPacer.afterCycle(report != null && report.activity());
-        CheckPacer.Change change = currentPacer.lastChange();
-        if (!stop.get()) {
-            try {
-                ScheduledFuture<?> future = executor == null ? null
-                        : executor.schedule(() -> runCycle(current, currentPacer, stop), next.toMillis(),
-                        TimeUnit.MILLISECONDS);
-                if (future != null) {
-                    Platform.runLater(() -> {
-                        if (watcher == current) {
-                            schedule = future;
-                        }
-                    });
-                }
-            } catch (java.util.concurrent.RejectedExecutionException e) {
-                // zatrzymano w międzyczasie
-            }
-        }
-        ArchiveWatcher.CycleReport result = report;
-        Platform.runLater(() -> cycleFinished(current, result, next, change));
+        refreshStatus();
+        refreshButtons();
     }
 
-    private void cycleFinished(ArchiveWatcher current, ArchiveWatcher.CycleReport report, Duration next,
-                               CheckPacer.Change change) {
-        if (report != null) {
-            lastCheckLabel.setText(TIME.format(report.at()));
-            waitingNow = report.waiting();
-            totalArchived += report.archived();
-            totalThumbnails += report.thumbnails();
-            totalErrors += report.errors().size();
-            if (report.movedDuplicates() != null) {
-                totalMovedDuplicates += report.movedDuplicates().removed().size();
-            }
-            if (report.eventful()) {
-                addLog(describe(report));
-                report.errors().stream().limit(10).forEach(e -> addLog("    błąd: " + e));
-            }
-        }
-        if (watcher == current) {
-            nextCheckLabel.setText(TIME.format(clock.instant().plus(next)) + "  (co " + describe(next) + ")");
-            if (change == CheckPacer.Change.SLOWED_DOWN) {
-                addLog("Brak nowych plików od " + describe(idleAfter) + " — sprawdzanie co " + describe(slowInterval) + ".");
-            } else if (change == CheckPacer.Change.SPED_UP) {
-                addLog("Pojawiły się nowe pliki — sprawdzanie znowu co " + describe(fastInterval) + ".");
-            }
-        }
-        refreshState();
+    private void stop() {
+        send(AgentCommand.of(AgentCommand.Type.STOP), "Zatrzymywanie agenta… (kończy bieżące sprawdzenie)");
+        stopRequested = true;
+        refreshButtons();
     }
 
-    static String describe(ArchiveWatcher.CycleReport report) {
-        if (report.problem() != null) {
-            return "Pominięto sprawdzenie: " + report.problem();
-        }
-        List<String> parts = new ArrayList<>();
-        if (report.archived() > 0) {
-            PhoneArchiver.Summary s = report.summary();
-            parts.add("zarchiwizowano " + Texts.count(report.archived(), "plik", "pliki", "plików")
-                    + " (" + Texts.formatBytes(s.archivedBytes()) + ") do " + s.dayFolder().getFileName());
-        }
-        if (report.thumbnails() > 0) {
-            parts.add("miniatury: " + report.thumbnails());
-        }
-        if (report.movedDuplicates() != null && !report.movedDuplicates().removed().isEmpty()) {
-            parts.add("przeniesiono duplikaty: " + report.movedDuplicates().removed().size());
-        }
-        if (!report.newDuplicates().isEmpty()) {
-            parts.add("nowe duplikaty do decyzji: " + report.newDuplicates().size());
-        }
-        if (report.waiting() > 0) {
-            parts.add("w trakcie przesyłania: " + report.waiting());
-        }
-        if (!report.errors().isEmpty()) {
-            parts.add("błędy: " + report.errors().size());
-        }
-        String text = String.join(", ", parts);
-        return text.isEmpty() ? "Bez zmian." : Character.toUpperCase(text.charAt(0)) + text.substring(1) + ".";
+    private void checkNow() {
+        send(AgentCommand.of(AgentCommand.Type.CHECK_NOW), "Wysłano polecenie „Sprawdź teraz”.");
     }
-
-    // =====================================================================
-    // Duplikaty czekające na decyzję
-    // =====================================================================
 
     private void removePendingDuplicates() {
-        ArchiveWatcher current = watcher;
-        if (current == null) {
+        if (status == null || status.pendingDuplicates().isEmpty()) {
             return;
         }
-        List<PhoneArchiver.Duplicate> duplicates = current.pendingDuplicates();
-        if (duplicates.isEmpty()) {
-            refreshState();
-            return;
-        }
-        Path target = current.options().target();
+        List<AgentStatus.PendingDuplicate> duplicates = status.pendingDuplicates();
+        Path target = status.target();
         List<String> details = new ArrayList<>();
+        List<Path> paths = new ArrayList<>();
         long bytes = 0;
-        for (PhoneArchiver.Duplicate d : duplicates) {
+        for (AgentStatus.PendingDuplicate d : duplicates) {
             bytes += d.size();
-            String existing = d.existing().startsWith(target) ? target.relativize(d.existing()).toString()
-                    : d.existing().toString();
+            paths.add(d.source());
+            String existing = target != null && d.existing().startsWith(target)
+                    ? target.relativize(d.existing()).toString() : d.existing().toString();
             details.add(d.source() + "   →   " + existing);
         }
         boolean toTrash = PhoneArchiver.trashSupported();
@@ -371,32 +226,19 @@ public class BackupView extends BorderPane {
                 + ") z folderu źródłowego już jest w archiwum. Czy usunąć je z folderu źródłowego? "
                 + "Kopie w archiwum pozostaną.\n\n"
                 + (toTrash ? "Pliki trafią do kosza systemowego." : "Pliki zostaną usunięte trwale.");
-        if (!Dialogs.confirmWithDetails(window(), "Duplikaty już są w archiwum", message, details,
+        if (Dialogs.confirmWithDetails(window(), "Duplikaty już są w archiwum", message, details,
                 toTrash ? "Przenieś do kosza" : "Usuń trwale", true)) {
-            return;
+            send(AgentCommand.removeDuplicates(paths, toTrash), "Wysłano polecenie usunięcia duplikatów.");
         }
-        Task<PhoneArchiver.RemovalOutcome> task = new Task<>() {
-            @Override
-            protected PhoneArchiver.RemovalOutcome call() {
-                return current.removePending(duplicates, toTrash);
-            }
-        };
-        task.setOnSucceeded(e -> {
-            PhoneArchiver.RemovalOutcome outcome = task.getValue();
-            String text = (toTrash ? "Przeniesiono do kosza " : "Usunięto ")
-                    + Texts.count(outcome.removed().size(), "duplikat", "duplikaty", "duplikatów") + "."
-                    + (outcome.skippedProtected() > 0
-                    ? " Pominięto w chronionych folderach „__”: " + outcome.skippedProtected() + "." : "");
-            addLog(text);
-            outcome.errors().stream().limit(10).forEach(err -> addLog("    błąd: " + err));
-            showStatus(text, !outcome.errors().isEmpty());
-            refreshState();
-        });
-        task.setOnFailed(e -> showStatus("Usuwanie duplikatów nie powiodło się: " + task.getException().getMessage(), true));
-        removeDuplicatesButton.setDisable(true);
-        Thread thread = new Thread(task, "photon-backup-remove-duplicates");
-        thread.setDaemon(true);
-        thread.start();
+    }
+
+    private void send(AgentCommand command, String message) {
+        try {
+            control.send(command);
+            showStatus(message, false);
+        } catch (IOException e) {
+            showStatus("Nie udało się wysłać polecenia: " + e.getMessage(), true);
+        }
     }
 
     // =====================================================================
@@ -408,48 +250,56 @@ public class BackupView extends BorderPane {
         profileCombo.setPromptText("Brak profili — utwórz je w zakładce „Archiwizacja telefonu”");
         profileCombo.setCellFactory(list -> new ProfileCell());
         profileCombo.setButtonCell(new ProfileCell());
-        profileCombo.valueProperty().addListener((obs, old, value) -> refreshState());
+        profileCombo.valueProperty().addListener((obs, old, value) -> refreshButtons());
 
         GridPane grid = formGrid();
         grid.addRow(0, fieldLabel("Profil archiwizacji"), profileCombo);
         profileDescription.getStyleClass().add("field-hint");
         profileDescription.setWrapText(true);
 
-        Label uploads = infoBanner("Folder źródłowy jest sprawdzany co " + describe(fastInterval) + ", a gdy przez "
-                + describe(idleAfter) + " nic nowego się nie pojawi — co " + describe(slowInterval)
-                + " (po pojawieniu się plików znowu co " + describe(fastInterval) + "). Pliki mogą "
-                + "być jeszcze przesyłane (np. z internetu), dlatego plik trafia do archiwum dopiero wtedy, "
-                + "gdy jego rozmiar i data zmiany nie zmieniły się przez co najmniej " + describe(quietPeriod)
-                + " i żaden program nie trzyma go otwartego. Takie pliki czekają na kolejne sprawdzenie.");
+        Label agent = infoBanner("Archiwizację w tle wykonuje osobny, lekki program (agent) — działa także po "
+                + "zamknięciu PhotoN. Tutaj go uruchamiasz, zatrzymujesz i podglądasz. Można go też uruchomić "
+                + "z konsoli: photon-backup.bat --profile \"NAZWA\" (oraz --status, --stop, --list).");
+        Label pace = infoBanner("Agent sprawdza folder co 15 sekund, a po 15 minutach bez nowych plików co 15 minut. "
+                + "Nowy plik budzi go od razu (powiadomienia systemowe). Pliki w trakcie przesyłania czekają, aż przez "
+                + "30 sekund nie zmienią rozmiaru ani daty i żaden program nie będzie ich zapisywał.");
         Label rules = infoBanner("Archiwizacja działa jak w zakładce „Archiwizacja telefonu”: nowe zdjęcia i filmy "
-                + "trafiają do folderu z dzisiejszą datą, duplikaty są wykrywane, a miniatury tworzone zgodnie "
-                + "z profilem. Duplikaty są przenoszone automatycznie, jeśli profil tak każe; jeśli profil każe je "
-                + "usuwać — czekają na Twoje potwierdzenie (przycisk „Usuń zgłoszone duplikaty”).");
+                + "trafiają do folderu z dzisiejszą datą, a miniatury są tworzone zgodnie z profilem. Duplikaty trafiają "
+                + "do śmietnika, jeśli profil tak każe; jeśli profil każe je usuwać — czekają na Twoje potwierdzenie.");
         return new FormSection(MaterialDesignP.PLAY_CIRCLE_OUTLINE,
                 "Archiwizacja w tle",
-                "Wybierz profil z zakładki „Archiwizacja telefonu” i uruchom automatyczne sprawdzanie.",
-                grid, profileDescription, uploads, rules);
+                "Wybierz profil z zakładki „Archiwizacja telefonu” i uruchom agenta.",
+                grid, profileDescription, agent, pace, rules);
     }
 
     private Node buildStatusSection() {
         stateLabel.getStyleClass().add("backup-state");
+        problemLabel.getStyleClass().add("warning-banner");
+        problemLabel.setWrapText(true);
+        problemLabel.setMaxWidth(Double.MAX_VALUE);
+        problemLabel.managedProperty().bind(problemLabel.textProperty().isNotEmpty());
+        problemLabel.visibleProperty().bind(problemLabel.managedProperty());
+        totalsLabel.setWrapText(true);
+
         GridPane grid = formGrid();
         grid.addRow(0, fieldLabel("Stan"), stateLabel);
-        grid.addRow(1, fieldLabel("Ostatnie sprawdzenie"), lastCheckLabel);
-        grid.addRow(2, fieldLabel("Następne sprawdzenie"), nextCheckLabel);
-        grid.addRow(3, fieldLabel("Od uruchomienia"), totalsLabel);
-        totalsLabel.setWrapText(true);
-        return new FormSection(MaterialDesignT.TIMER_OUTLINE, "Stan", "Bieżąca praca archiwizacji w tle.", grid);
+        grid.addRow(1, fieldLabel("Działa od"), sinceLabel);
+        grid.addRow(2, fieldLabel("Ostatnie sprawdzenie"), lastCheckLabel);
+        grid.addRow(3, fieldLabel("Następne sprawdzenie"), nextCheckLabel);
+        grid.addRow(4, fieldLabel("Powiadomienia"), notificationsLabel);
+        grid.addRow(5, fieldLabel("Od uruchomienia"), totalsLabel);
+        return new FormSection(MaterialDesignT.TIMER_OUTLINE, "Stan agenta",
+                "Odświeżany co sekundę, gdy ta zakładka jest otwarta.", grid, problemLabel);
     }
 
     private Node buildLogSection() {
         log.getStyleClass().add("backup-log");
-        log.setPrefHeight(240);
+        log.setPrefHeight(260);
         Label placeholder = new Label("Tu pojawią się zdarzenia archiwizacji.");
         placeholder.getStyleClass().add("list-placeholder");
         log.setPlaceholder(placeholder);
         return new FormSection(MaterialDesignI.INFORMATION_OUTLINE, "Dziennik",
-                "Najnowsze zdarzenia na górze. Zapisywane też w pliku logs/kopia-zapasowa.log.", log);
+                "Najnowsze zdarzenia na górze. Plik: " + control.files().logFile(), log);
     }
 
     private Node buildActionBar() {
@@ -460,7 +310,7 @@ public class BackupView extends BorderPane {
 
         startButton.getStyleClass().add("button-primary");
         startButton.setOnAction(e -> {
-            if (isRunning()) {
+            if (running) {
                 stop();
             } else {
                 start();
@@ -479,65 +329,70 @@ public class BackupView extends BorderPane {
         return bar;
     }
 
-    private void refreshState() {
-        boolean running = isRunning();
+    private void refreshStatus() {
+        AgentStatus s = status;
+        if (running) {
+            stateLabel.setText((s != null && s.checking() ? "Sprawdzanie…" : "Działa")
+                    + (s != null ? " — profil „" + s.profile() + "”, PID " + s.pid() : ""));
+        } else if (startRequestedAt != null) {
+            stateLabel.setText("Uruchamianie…");
+        } else {
+            stateLabel.setText("Zatrzymany" + (s != null && s.stoppedAt() != null
+                    ? " (od " + DATE_TIME.format(s.stoppedAt()) + ")"
+                    : s != null && s.state() == AgentStatus.State.RUNNING ? " (zakończył się niespodziewanie)" : ""));
+        }
+        stateLabel.pseudoClassStateChanged(ACTIVE, running);
+
+        boolean live = running && s != null;
+        sinceLabel.setText(live && s.startedAt() != null ? DATE_TIME.format(s.startedAt()) : "—");
+        lastCheckLabel.setText(s != null && s.lastCheck() != null ? TIME.format(s.lastCheck()) : "—");
+        nextCheckLabel.setText(live && s.nextCheck() != null
+                ? TIME.format(s.nextCheck()) + "  (co " + AgentLoop.describe(java.time.Duration.ofSeconds(s.intervalSeconds()))
+                + (s.slowMode() ? " — brak nowych plików od 15 minut" : "") + ")"
+                : "—");
+        notificationsLabel.setText(!live ? "—" : s.notifications()
+                ? "aktywne — nowy plik budzi agenta od razu"
+                : "niedostępne — tylko sprawdzanie cykliczne");
+        totalsLabel.setText(s == null ? "—" : "zarchiwizowano " + s.archived() + "  •  miniatury " + s.thumbnails()
+                + "  •  duplikaty do śmietnika " + s.movedDuplicates()
+                + "  •  duplikaty do decyzji " + s.pendingDuplicates().size()
+                + "  •  czeka (przesyłanie) " + s.waiting()
+                + "  •  błędy " + s.errors());
+        problemLabel.setText(live && s.lastProblem() != null ? s.lastProblem() : "");
+    }
+
+    private void refreshLog() {
+        List<String> lines = control.logTail(LOG_LINES);
+        if (!lines.equals(log.getItems())) {
+            log.getItems().setAll(lines);
+        }
+    }
+
+    private void refreshButtons() {
         Profile<PhoneArchiveOptions> profile = profileCombo.getValue();
-        profileCombo.setDisable(running);
+        if (running && status != null && (profile == null || !Objects.equals(profile.name(), status.profile()))) {
+            profileCombo.getItems().stream().filter(p -> p.name().equals(status.profile())).findFirst()
+                    .ifPresent(profileCombo::setValue);
+            profile = profileCombo.getValue();
+        }
+        profileCombo.setDisable(running || startRequestedAt != null);
         profileDescription.setText(profile == null ? "" : PhoneArchiveProfileStore.describe(profile.options())
                 + "\nŹródło: " + profile.options().source() + "\nArchiwum: " + profile.options().target());
 
-        if (running) {
-            stateLabel.setText((cycleRunning.get() ? "Sprawdzanie…" : "Działa")
-                    + " — profil „" + watcher.profileName() + "”");
-        } else {
-            stateLabel.setText("Zatrzymana");
-        }
-        stateLabel.pseudoClassStateChanged(ACTIVE, running);
         startButton.setText(running ? "Zatrzymaj" : "Uruchom");
         startButton.setGraphic(new FontIcon(running ? MaterialDesignS.STOP_CIRCLE_OUTLINE
                 : MaterialDesignP.PLAY_CIRCLE_OUTLINE));
-        startButton.setDisable(!running && profile == null);
-        checkNowButton.setDisable(!running || cycleRunning.get());
+        startButton.setDisable(running ? stopRequested : (profile == null || startRequestedAt != null));
+        checkNowButton.setDisable(!running || stopRequested);
 
-        int pending = running ? watcher.pendingDuplicatesCountCached() : 0;
+        int pending = running && status != null ? status.pendingDuplicates().size() : 0;
         removeDuplicatesButton.setText("Usuń zgłoszone duplikaty (" + pending + ")…");
         removeDuplicatesButton.setVisible(pending > 0);
-
-        totalsLabel.setText("zarchiwizowano " + totalArchived + "  •  miniatury " + totalThumbnails
-                + "  •  przeniesione duplikaty " + totalMovedDuplicates
-                + "  •  duplikaty do decyzji " + pending
-                + "  •  czeka (przesyłanie) " + waitingNow
-                + "  •  błędy " + totalErrors);
-    }
-
-    private void addLog(String text) {
-        Instant now = clock.instant();
-        log.getItems().add(0, TIME.format(now) + "  " + text);
-        if (log.getItems().size() > MAX_LOG_ENTRIES) {
-            log.getItems().remove(MAX_LOG_ENTRIES, log.getItems().size());
-        }
-        try {
-            Path file = AppPaths.logsDir().resolve("kopia-zapasowa.log");
-            Files.createDirectories(file.getParent());
-            Files.writeString(file, LOG_TIME.format(now) + "\t" + text + System.lineSeparator(),
-                    StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            System.err.println("Nie udało się zapisać dziennika kopii zapasowej: " + e.getMessage());
-        }
     }
 
     private void showStatus(String text, boolean error) {
         feedback.setText(text);
         feedback.pseudoClassStateChanged(ERROR, error);
-    }
-
-    private static String describe(Duration duration) {
-        long seconds = duration.toSeconds();
-        if (seconds > 0 && seconds % 60 == 0) {
-            long minutes = seconds / 60;
-            return minutes == 1 ? "minutę" : Texts.count((int) minutes, "minutę", "minuty", "minut");
-        }
-        return Texts.count((int) seconds, "sekundę", "sekundy", "sekund");
     }
 
     private static Label infoBanner(String text) {

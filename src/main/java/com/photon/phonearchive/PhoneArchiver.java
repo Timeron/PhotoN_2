@@ -28,6 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -111,12 +112,19 @@ public class PhoneArchiver {
     /** Sumy policzone w tym przebiegu (także dla plików źródłowych, których nie ma w pamięci podręcznej). */
     private final Map<Path, String> hashes = new HashMap<>();
     private FileGate gate = file -> FileState.READY;
+    private ArchiveIndex archiveIndex;
 
     /** @param cache pamięć podręczna sum plików archiwum (null = bez pamięci) */
     public PhoneArchiver(PhoneArchiveOptions options, LocalDate today, HashCache cache) {
         this.options = options;
         this.today = today;
         this.cache = cache;
+    }
+
+    /** Spis archiwum pamiętany między przebiegami (domyślnie budowany za każdym razem). */
+    public PhoneArchiver withIndex(ArchiveIndex index) {
+        this.archiveIndex = index;
+        return this;
     }
 
     /** Ustawia filtr plików źródłowych (domyślnie wszystkie są gotowe). */
@@ -191,12 +199,22 @@ public class PhoneArchiver {
         progress.update("Wyszukiwanie zdjęć i filmów w folderze archiwizowanym…", -1, 1);
         List<Path> media = collectSource(source, target, errors, cancelled);
 
-        progress.update("Indeksowanie archiwum…", -1, 1);
         List<Path> folders = dateFolders(target);
-        Map<Long, List<Path>> index = new HashMap<>();
-        for (Path folder : folders) {
-            indexFolder(folder, index, errors, cancelled);
+        if (media.isEmpty()) {
+            // Nic do archiwizacji — archiwum nie jest w ogóle czytane (najczęstszy przypadek w tle).
+            return new Summary(List.of(), List.of(), List.of(), folders.size(), List.copyOf(errors), 0, dayFolder,
+                    Duration.ofNanos(System.nanoTime() - start),
+                    thumbFolder == null ? ThumbnailStats.NONE : new ThumbnailStats(0, 0, 0, thumbFolder), 0);
         }
+        progress.update("Indeksowanie archiwum…", -1, 1);
+        Supplier<Map<Long, List<Path>>> builder = () -> {
+            Map<Long, List<Path>> built = new HashMap<>();
+            for (Path folder : folders) {
+                indexFolder(folder, built, errors, cancelled);
+            }
+            return built;
+        };
+        Map<Long, List<Path>> index = archiveIndex != null ? archiveIndex.current(folders, builder) : builder.get();
 
         List<Path> moved = new ArrayList<>();
         List<Path> copied = new ArrayList<>();

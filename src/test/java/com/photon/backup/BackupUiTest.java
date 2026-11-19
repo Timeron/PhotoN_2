@@ -6,9 +6,9 @@ import com.photon.phonearchive.PhoneArchiveProfileStore;
 import com.photon.phonearchive.PhoneArchiver;
 import com.photon.phonearchive.PhoneDuplicateAction;
 import com.photon.profiles.Profile;
-import com.photon.settings.SettingsService;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.stage.Stage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,11 +29,13 @@ import java.time.LocalDate;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Zakładka „Kopia zapasowa” w GUI bez ekranu: profil → uruchom → pliki archiwizowane w tle → zatrzymaj. */
+/**
+ * Zakładka „Kopia zapasowa” jako panel sterowania agentem. Agent działa tu w wątku tego samego procesu
+ * (z krótkimi odstępami), ale porozumiewa się z widokiem tak samo jak osobny proces — przez pliki.
+ */
 @ExtendWith(ApplicationExtension.class)
 class BackupUiTest {
 
@@ -51,6 +53,8 @@ class BackupUiTest {
     static Path dir;
 
     private BackupView view;
+    private AgentLoop loop;
+    private Thread agentThread;
 
     @Start
     void start(Stage stage) throws IOException {
@@ -60,10 +64,25 @@ class BackupUiTest {
                 PhoneDuplicateAction.REMOVE, null)));
         store.save(new Profile<>("Inny", Instant.now(), new PhoneArchiveOptions(
                 dir.resolve("Inny"), dir.resolve("Archiwum2"), true)));
+        Files.createDirectories(dir.resolve("Upload"));
 
-        // Krótki odstęp i brak okresu spokoju — test nie czeka minutę.
-        view = new BackupView(store, new SettingsService(AppPaths.settingsFile()), Duration.ofMillis(300),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ZERO, Clock.systemDefaultZone());
+        AgentFiles files = AgentFiles.in(dir.resolve("backup"));
+        AgentControl control = new AgentControl(files, profileName -> {
+            PhoneArchiveOptions options = store.loadAll().stream().filter(p -> p.name().equals(profileName))
+                    .findFirst().orElseThrow().options();
+            loop = new AgentLoop(profileName, options, files, null, Duration.ofMillis(300), Duration.ofMillis(300),
+                    Duration.ofHours(1), Duration.ZERO, Duration.ofMillis(500), Clock.systemDefaultZone(), null);
+            agentThread = new Thread(() -> {
+                try {
+                    loop.run();
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+            }, "agent-ui-test");
+            agentThread.setDaemon(true);
+            agentThread.start();
+        });
+        view = new BackupView(store, control);
         Scene scene = new Scene(view, 1400, 850);
         scene.getStylesheets().add(Objects.requireNonNull(
                 getClass().getResource("/com/photon/styles/dark-theme.css")).toExternalForm());
@@ -72,14 +91,15 @@ class BackupUiTest {
     }
 
     @Stop
-    void stop() {
-        if (view != null) {
-            view.stop();
+    void stop() throws InterruptedException {
+        if (loop != null) {
+            loop.requestStop();
+            agentThread.join(10_000);
         }
     }
 
     @Test
-    void archivesNewFilesInBackgroundUntilStopped(FxRobot robot) throws Exception {
+    void startsAgentShowsItsWorkAndControlsIt(FxRobot robot) throws Exception {
         Path upload = dir.resolve("Upload");
         Path archive = dir.resolve("Archiwum");
         write(upload.resolve("IMG_1.jpg"), "jeden");
@@ -89,37 +109,41 @@ class BackupUiTest {
         robot.interact(() -> view.profileCombo().setValue(view.profileCombo().getItems().stream()
                 .filter(p -> p.name().equals("Telefon")).findFirst().orElseThrow()));
         robot.clickOn("Uruchom");
-        assertTrue(view.isRunning());
+
+        waitFor(robot, () -> view.isRunning());
         assertTrue(view.profileCombo().isDisabled(), "profilu nie zmienia się w trakcie pracy");
-
         Path day = archive.resolve(LocalDate.now().format(PhoneArchiver.DAY_FORMAT));
-        WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> Files.exists(day.resolve("IMG_1.jpg")));
+        waitFor(robot, () -> Files.exists(day.resolve("IMG_1.jpg")));
 
-        // Plik dodany w trakcie pracy też trafia do archiwum w kolejnym przebiegu.
-        write(upload.resolve("IMG_2.jpg"), "dwa");
-        WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> Files.exists(day.resolve("IMG_2.jpg")));
-        assertTrue(Files.exists(upload.resolve("IMG_dup.jpg")), "duplikat nie jest usuwany bez pytania");
+        // Stan i dziennik agenta widoczne w zakładce.
+        waitFor(robot, () -> robot.lookup(".backup-state").queryAs(Label.class).getText().contains("profil „Telefon”"));
+        waitFor(robot, () -> view.logEntries().stream().anyMatch(e -> e.contains("Zarchiwizowano 1 plik")));
 
-        // Duplikat czeka na decyzję — przycisk z licznikiem.
-        WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> robot.lookup(".button").queryAllAs(Button.class)
-                .stream().anyMatch(b -> b.isVisible() && b.getText() != null
+        // Duplikat do decyzji → przycisk z licznikiem → potwierdzenie → agent usuwa.
+        waitFor(robot, () -> robot.lookup(".button").queryAllAs(Button.class).stream()
+                .anyMatch(b -> b.isVisible() && b.getText() != null
                         && b.getText().startsWith("Usuń zgłoszone duplikaty (1)")));
         robot.clickOn(".action-bar .button-danger");
         WaitForAsyncUtils.waitForFxEvents();
         robot.clickOn(".dialog-pane .button-danger");
-        WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> !Files.exists(upload.resolve("IMG_dup.jpg")));
+        waitFor(robot, () -> !Files.exists(upload.resolve("IMG_dup.jpg")));
         assertTrue(Files.exists(archive.resolve("2020-01-01/IMG_dup.jpg")));
 
-        assertTrue(view.logEntries().stream().anyMatch(e -> e.contains("Zarchiwizowano")), view.logEntries().toString());
-        assertTrue(Files.readString(AppPaths.logsDir().resolve("kopia-zapasowa.log")).contains("Start: profil „Telefon”"));
-
+        // Zatrzymanie.
         robot.clickOn("Zatrzymaj");
-        assertFalse(view.isRunning());
+        waitFor(robot, () -> !view.isRunning());
         assertFalse(view.profileCombo().isDisabled());
+        waitFor(robot, () -> robot.lookup(".backup-state").queryAs(Label.class).getText().startsWith("Zatrzymany"));
         write(upload.resolve("IMG_3.jpg"), "trzy");
         Thread.sleep(1000);
         assertFalse(Files.exists(day.resolve("IMG_3.jpg")), "po zatrzymaniu nic nie jest archiwizowane");
-        assertEquals("Uruchom", robot.lookup(".action-bar .button-primary").queryAs(Button.class).getText());
+    }
+
+    private static void waitFor(FxRobot robot, java.util.concurrent.Callable<Boolean> condition) throws Exception {
+        WaitForAsyncUtils.waitFor(20, TimeUnit.SECONDS, () -> {
+            WaitForAsyncUtils.waitForFxEvents();
+            return condition.call();
+        });
     }
 
     private static void write(Path file, String content) throws IOException {

@@ -1,6 +1,7 @@
 package com.photon.backup;
 
 import com.photon.duplicates.scan.HashCache;
+import com.photon.phonearchive.ArchiveIndex;
 import com.photon.phonearchive.PhoneArchiveOptions;
 import com.photon.phonearchive.PhoneArchiver;
 
@@ -88,6 +89,9 @@ public class ArchiveWatcher {
     private final HashCache cache;
     private final Clock clock;
     private final UploadGate gate;
+    /** Spis archiwum pamiętany między przebiegami; pełne odświeżenie najpóźniej co {@link #INDEX_MAX_AGE}. */
+    private final ArchiveIndex index;
+    public static final Duration INDEX_MAX_AGE = Duration.ofMinutes(15);
     /** Duplikaty czekające na decyzję — osobna blokada, by okno nie czekało na trwający przebieg. */
     private final Map<Path, PhoneArchiver.Duplicate> pending = new LinkedHashMap<>();
     private final Object pendingLock = new Object();
@@ -104,6 +108,12 @@ public class ArchiveWatcher {
         this.cache = cache;
         this.clock = clock;
         this.gate = new UploadGate(quietPeriod, clock);
+        this.index = new ArchiveIndex(INDEX_MAX_AGE, clock);
+    }
+
+    /** Spis archiwum (do testów i diagnostyki). */
+    public ArchiveIndex index() {
+        return index;
     }
 
     public String profileName() {
@@ -127,6 +137,7 @@ public class ArchiveWatcher {
         try {
             summary = new PhoneArchiver(options, LocalDate.ofInstant(at, clock.getZone()), cache)
                     .withGate(gate)
+                    .withIndex(index)
                     .run((message, done, total) -> { }, cancelled);
         } finally {
             changed = gate.changesThisCycle();

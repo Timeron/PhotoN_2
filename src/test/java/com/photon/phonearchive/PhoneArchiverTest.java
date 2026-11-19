@@ -334,6 +334,36 @@ class PhoneArchiverTest {
                 PhoneDuplicateAction.REMOVE, null).validate(), "usuwanie nie wymaga folderu");
     }
 
+    @Test
+    void archiveIndexIsReusedAndSkippedWhenSourceIsEmpty() throws IOException {
+        Path phone = Files.createDirectories(dir.resolve("Telefon"));
+        Path archive = dir.resolve("Archiwum");
+        write(archive.resolve("2020-01-01/stare.jpg"), "stare");
+        ArchiveIndex index = new ArchiveIndex(java.time.Duration.ofMinutes(15), java.time.Clock.systemUTC());
+        PhoneArchiveOptions options = new PhoneArchiveOptions(phone, archive, true);
+
+        // Pusty folder źródłowy — archiwum nie jest czytane.
+        new PhoneArchiver(options, TODAY, null).withIndex(index).run((m, d, t) -> { }, () -> false);
+        assertEquals(0, index.rebuilds());
+
+        write(phone.resolve("IMG_1.jpg"), "jeden");
+        new PhoneArchiver(options, TODAY, null).withIndex(index).run((m, d, t) -> { }, () -> false);
+        assertEquals(1, index.rebuilds());
+
+        // Nowy folder z datą (2026-11-18) — spis budowany od nowa; potem używany ponownie.
+        write(phone.resolve("IMG_2.jpg"), "dwa");
+        new PhoneArchiver(options, TODAY, null).withIndex(index).run((m, d, t) -> { }, () -> false);
+        assertEquals(2, index.rebuilds());
+
+        // Plik przeniesiony przez archiwizację jest w spisie — jego kopia to duplikat, bez czytania archiwum.
+        write(phone.resolve("IMG_2 kopia.jpg"), "dwa");
+        PhoneArchiver.Summary summary = new PhoneArchiver(options, TODAY, null).withIndex(index)
+                .run((m, d, t) -> { }, () -> false);
+        assertEquals(2, index.rebuilds(), "spis z pamięci");
+        assertEquals(1, summary.duplicates().size());
+        assertEquals(archive.resolve("2026-11-18/IMG_2.jpg"), summary.duplicates().get(0).existing());
+    }
+
     private static PhoneArchiver.Summary run(Path phone, Path archive, boolean subfolders) {
         return new PhoneArchiver(new PhoneArchiveOptions(phone, archive, subfolders), TODAY, null)
                 .run((message, done, total) -> { }, () -> false);

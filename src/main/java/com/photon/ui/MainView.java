@@ -84,7 +84,7 @@ public class MainView extends BorderPane {
             }
             case BACKUP -> {
                 if (backupView == null) {
-                    backupView = new BackupView(phoneArchiveProfileStore, settings);
+                    backupView = new BackupView(phoneArchiveProfileStore, com.photon.backup.AgentControl.createDefault());
                 }
                 backupView.reloadProfiles();
                 contentArea.show("Kopia zapasowa",

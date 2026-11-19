@@ -164,7 +164,7 @@ class ArchiveWatcherTest {
 
         assertNull(report.summary());
         assertNotNull(report.problem());
-        assertTrue(BackupView.describe(report).startsWith("Pominięto sprawdzenie"));
+        assertTrue(AgentLoop.describe(report).startsWith("Pominięto sprawdzenie"));
     }
 
     @Test
