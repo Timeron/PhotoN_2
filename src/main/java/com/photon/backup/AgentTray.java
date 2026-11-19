@@ -21,6 +21,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -49,17 +52,26 @@ public final class AgentTray implements AgentLoop.Observer {
     private final Image idleImage;
     private final Image checkingImage;
     private final boolean notifications;
+    private final AgentLoop loop;
+    private final Optional<Path> appLauncher;
     private volatile AgentStatus lastStatus;
     private boolean checkingShown;
+    /** Okienko stanu — tworzone przy pierwszym „Pokaż stan” (tylko w wątku AWT). */
+    private AgentStatusWindow window;
+    /** Ostatnie zdarzenia (najnowsze pierwsze) — widoczne w okienku, nawet gdy Windows ukrywa powiadomienia. */
+    private final Deque<String> recent = new ArrayDeque<>();
+    static final int MAX_RECENT = 20;
 
     private AgentTray(AgentLoop loop, boolean notifications, Optional<Path> appLauncher) {
         this.notifications = notifications;
+        this.loop = loop;
+        this.appLauncher = appLauncher;
         this.idleImage = createImage(64, BRAND_START, BRAND_END);
         this.checkingImage = createImage(64, CHECKING_START, CHECKING_END);
 
         PopupMenu menu = new PopupMenu();
         stateItem.setEnabled(false);
-        MenuItem status = new MenuItem("Pokaż stan");
+        MenuItem status = new MenuItem("Pokaż stan…");
         status.addActionListener(e -> showStatus());
         MenuItem checkNow = new MenuItem("Sprawdź teraz");
         checkNow.addActionListener(e -> loop.requestCheckNow());
@@ -80,7 +92,7 @@ public final class AgentTray implements AgentLoop.Observer {
 
         icon = new TrayIcon(idleImage, "PhotoN — kopia zapasowa", menu);
         icon.setImageAutoSize(true);
-        // Dwuklik ikony: otwórz PhotoN (a gdy nie wiadomo, gdzie jest — pokaż stan).
+        // Dwuklik ikony: otwórz PhotoN (a gdy nie wiadomo, gdzie jest — okienko stanu).
         icon.addActionListener(e -> appLauncher.ifPresentOrElse(AgentTray::openApp, this::showStatus));
     }
 
@@ -108,7 +120,12 @@ public final class AgentTray implements AgentLoop.Observer {
     /** Usuwa ikonę z zasobnika (przy zatrzymaniu agenta). */
     public void remove() {
         try {
-            EventQueue.invokeAndWait(() -> SystemTray.getSystemTray().remove(icon));
+            EventQueue.invokeAndWait(() -> {
+                if (window != null) {
+                    window.dispose();
+                }
+                SystemTray.getSystemTray().remove(icon);
+            });
         } catch (Exception e) {
             SystemTray.getSystemTray().remove(icon);
         }
@@ -124,22 +141,51 @@ public final class AgentTray implements AgentLoop.Observer {
                 checkingShown = status.checking();
                 icon.setImage(checkingShown ? checkingImage : idleImage);
             }
+            if (window != null && window.isVisible()) {
+                window.update(status, recent());
+            }
         });
     }
 
     @Override
     public void notify(String title, String message, boolean warning) {
-        if (!notifications && !warning) {
-            return;
+        String line = eventLine(java.time.Instant.now(), message, warning);
+        synchronized (recent) {
+            recent.addFirst(line);
+            while (recent.size() > MAX_RECENT) {
+                recent.removeLast();
+            }
         }
-        EventQueue.invokeLater(() -> icon.displayMessage(title, message,
-                warning ? TrayIcon.MessageType.WARNING : TrayIcon.MessageType.INFO));
+        EventQueue.invokeLater(() -> {
+            if (window != null && window.isVisible()) {
+                window.update(lastStatus, recent());
+            }
+            if (notifications || warning) {
+                icon.displayMessage(title, message, warning ? TrayIcon.MessageType.WARNING : TrayIcon.MessageType.INFO);
+            }
+        });
     }
 
+    /** Okienko stanu (zamiast powiadomienia — te Windows potrafi ukrywać, np. w trybie „Nie przeszkadzać”). */
     private void showStatus() {
-        AgentStatus s = lastStatus;
-        String text = s == null ? "Agent uruchamia się…" : details(s);
-        EventQueue.invokeLater(() -> icon.displayMessage("PhotoN — kopia zapasowa", text, TrayIcon.MessageType.NONE));
+        EventQueue.invokeLater(() -> {
+            if (window == null) {
+                window = new AgentStatusWindow(idleImage, loop::requestCheckNow,
+                        appLauncher.<Runnable>map(path -> () -> openApp(path)).orElse(null), loop::requestStop);
+            }
+            window.show(lastStatus, recent());
+        });
+    }
+
+    private List<String> recent() {
+        synchronized (recent) {
+            return List.copyOf(recent);
+        }
+    }
+
+    /** Wiersz listy ostatnich zdarzeń, np. {@code 12:48:00  Nowe duplikaty czekają na decyzję: 6.} */
+    static String eventLine(java.time.Instant at, String message, boolean warning) {
+        return TIME.format(at) + "  " + (warning ? "⚠ " : "") + message.replace("\n", " ");
     }
 
     // =====================================================================

@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Teksty i grafika ikony w zasobniku (sam zasobnik nie jest dostępny w testach bez ekranu). */
@@ -42,6 +43,14 @@ class AgentTrayTest {
         assertTrue(details.contains("Zarchiwizowano: 5"));
         assertTrue(details.contains("co 15 sekund"), details);
         assertTrue(details.contains("Duplikaty do decyzji: 1"));
+    }
+
+    @Test
+    void recentEventLinesAreSingleLineWithTime() {
+        Instant at = Instant.parse("2026-11-19T11:48:00Z");
+        String line = AgentTray.eventLine(at, "Zarchiwizowano 2 pliki do 2026-11-19.\nBłędy: 1 — szczegóły w dzienniku.", true);
+        assertTrue(line.matches("\\d{2}:\\d{2}:\\d{2}  ⚠ Zarchiwizowano 2 pliki do 2026-11-19\\. Błędy: 1 — szczegóły w dzienniku\\."), line);
+        assertFalse(AgentTray.eventLine(at, "Nowe duplikaty czekają na decyzję: 6.", false).contains("⚠"));
     }
 
     @Test

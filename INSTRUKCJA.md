@@ -289,10 +289,15 @@ osobny, lekki program bez okna (bez JavaFX, z ograniczoną pamięcią). Działa 
 także gdy PhotoN jest zamknięty:
 - dymek po najechaniu: profil, ostatnie sprawdzenie, liczba zarchiwizowanych plików, ewentualny problem;
   podczas sprawdzania ikona zmienia kolor na turkusowo-zielony;
-- menu pod prawym przyciskiem: *Pokaż stan* (pełny stan w powiadomieniu), *Sprawdź teraz*, *Otwórz PhotoN*,
-  *Zatrzymaj kopię zapasową*; dwuklik otwiera PhotoN;
+- menu pod prawym przyciskiem: *Pokaż stan…*, *Sprawdź teraz*, *Otwórz PhotoN*, *Zatrzymaj kopię zapasową*;
+  dwuklik otwiera PhotoN (a przy uruchamianiu ze źródeł — okienko stanu);
+- *Pokaż stan…* otwiera okienko w prawym dolnym rogu ekranu: pełny stan, **ostatnie zdarzenia** (do 20 —
+  to samo, co trafia do powiadomień) i przyciski *Sprawdź teraz*, *Otwórz PhotoN*, *Zatrzymaj*. Okienko jest
+  widoczne zawsze, także gdy Windows ukrywa powiadomienia (tryb „Nie przeszkadzać”, wyłączone powiadomienia);
 - powiadomienia w rogu ekranu, gdy pliki zostaną zarchiwizowane, duplikaty przeniesione albo czekają na decyzję
-  (wyłącza je ustawienie „powiadomienie po zakończeniu”; ostrzeżenia o błędach pokazują się zawsze);
+  (wyłącza je ustawienie „powiadomienie po zakończeniu”; ostrzeżenia o błędach pokazują się zawsze). Jeśli się
+  nie pokazują, sprawdź *Ustawienia Windows → System → Powiadomienia* („Nie przeszkadzać”, powiadomienia dla
+  „Java(TM) Platform SE binary” lub PhotoN) — zdarzenia i tak widać w okienku stanu i w dzienniku;
 - *Otwórz PhotoN* działa w wersji wyeksportowanej; przy uruchamianiu ze źródeł jest nieaktywne.
 
 **Jak zatrzymać agenta**, gdy PhotoN jest zamknięty: ikona w zasobniku → *Zatrzymaj kopię zapasową*, albo
